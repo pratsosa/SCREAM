@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -9,8 +9,13 @@ class StreamConfig:
     generated_data_path: str
     features: List[str]
     error_features: List[str]
-    pm_ra_signal_range: Tuple[float, float]
+    flow_data_columns: List[str]
+    flow_cond_columns: List[str]
     quality_cuts: Dict
+    # If None, the signal region is taken from the pre-computed 'signal_region'
+    # boolean column in the raw FITS file. Set to [low, high] to derive it
+    # dynamically from pm_ra values (useful when no pre-computed column exists).
+    pm_ra_signal_range: Optional[Tuple[float, float]] = None
 
 
 @dataclass
