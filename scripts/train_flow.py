@@ -6,14 +6,16 @@ python scripts/train_flow.py --stream configs/streams/gd1.yaml
 
 The script:
   1. Trains a pzflow RollingSplineCoupling flow on the sideband region.
-  2. Saves the trained flow to $PSCRATCH/<STREAM>_SCREAM/generated/<name>.pkl.
-  3. Generates background samples conditioned on KDE-sampled pm_ra values.
-  4. Writes the combined signal + generated CSV to cfg.generated_data_path.
-  5. Saves diagnostic plots to $PSCRATCH/<STREAM>_SCREAM/plots/<run_id>/.
+  2. Generates background samples conditioned on KDE-sampled pm_ra values.
+  3. Writes the combined signal + generated CSV to cfg.generated_data_path.
+  4. Saves diagnostic plots to $PSCRATCH/<STREAM>_SCREAM/plots/<run_id>/.
+
+The trained flow object is NOT saved to disk — sampling runs immediately
+after training using the in-memory flow, avoiding serialization issues with
+the custom bijector.
 """
 
 import argparse
-import pickle
 from pathlib import Path
 
 import yaml
@@ -66,14 +68,6 @@ def main():
         max_lr=args.max_lr,
         seed=args.seed,
     )
-
-    # Save trained flow
-    out_dir = scratch / "generated"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    flow_path = out_dir / f"{cfg.name}_flow_{run_id}.pkl"
-    with open(flow_path, "wb") as f:
-        pickle.dump(flow, f)
-    print(f"\nFlow saved to: {flow_path}")
 
     # Loss curve
     plots_dir.mkdir(parents=True, exist_ok=True)
