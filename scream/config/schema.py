@@ -27,11 +27,15 @@ class TrainConfig:
     dropout: float = 0.0
     use_layer_norm: bool = True
     use_residual: bool = False
+    activation: str = "relu"
+    pct_start: float = 0.3
     # Placeholder — noise annealing will be removed in a later pass when full
     # covariance matrix inputs are implemented.
     noise_annealing: str = "constant"
     max_epochs: int = 100
     batch_size: int = 512
     weight_decay: float = 1e-4
+    p_wiggle: float = 0.0
+    early_stopping_patience: int = 35
     seed: int = 42
     wandb_project: str = "SCREAM"

@@ -1,0 +1,32 @@
+# EM-CATHODE MLP — hyperparameters extracted from GD1_EM_CATHODE_MLP.ipynb
+
+# Model architecture
+hidden_units: 256
+num_layers: 4
+activation: relu
+use_layer_norm: false
+use_residual: false
+dropout: 0.0
+
+# Training
+lr: 0.01
+pct_start: 0.1          # Fraction of training spent warming up the LR (OneCycleLR)
+max_epochs: 100
+batch_size: 25000
+weight_decay: 0.0
+num_mc_samples: 10
+
+# Data augmentation
+p_wiggle: 0.5           # Fractional std applied as photometric feature errors
+
+# Noise annealing (placeholder — will be removed when full covariance inputs land)
+noise_annealing: constant
+
+# Early stopping
+early_stopping_patience: 35
+
+# Reproducibility
+seed: 42
+
+# Logging
+wandb_project: SCREAM
