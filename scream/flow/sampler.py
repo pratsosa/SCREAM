@@ -116,8 +116,8 @@ def generate_samples(
     return pd.concat([signal_df, samples_df], ignore_index=True)
 
 
-def save_samples(df: pd.DataFrame, cfg: StreamConfig) -> Path:
-    """Write the combined dataframe to ``cfg.generated_data_path``.
+def save_samples(df: pd.DataFrame, out_path: Path) -> Path:
+    """Write the combined dataframe to ``out_path``.
 
     Creates parent directories as needed.
 
@@ -126,7 +126,7 @@ def save_samples(df: pd.DataFrame, cfg: StreamConfig) -> Path:
     Path
         The path the CSV was written to.
     """
-    out_path = Path(cfg.generated_data_path)
+    out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
     return out_path

@@ -5,3 +5,6 @@ CLAUDE.md
 *.egg-info/
 __pycache__/
 *.pyc
+
+# SLURM output files
+*train_flow.out
