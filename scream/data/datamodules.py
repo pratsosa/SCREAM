@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ from scream.data.datasets import (
     EM_CATHODEGaiaDatasetLinear,
 )
 from scream.data.transforms import get_mask_splits
+from scream.utils.hpc import get_scratch_dir
 
 
 class CATHODELinearDataModule(L.LightningDataModule):
@@ -88,10 +89,11 @@ class CATHODELinearDataModule(L.LightningDataModule):
             self.test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
             self.val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
 
-            os.makedirs(f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp', exist_ok=True)
-            torch.save(self.train_loader, f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp/linear_train_loader_{self.name}.pth')
-            torch.save(self.test_loader, f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp/linear_test_loader_{self.name}.pth')
-            torch.save(self.val_loader, f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp/linear_val_loader_{self.name}.pth')
+            loaders_dir = get_scratch_dir(self.stream) / "loaders"
+            loaders_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(self.train_loader, loaders_dir / f"linear_train_loader_{self.name}.pth")
+            torch.save(self.test_loader, loaders_dir / f"linear_test_loader_{self.name}.pth")
+            torch.save(self.val_loader, loaders_dir / f"linear_val_loader_{self.name}.pth")
 
     def train_dataloader(self):
         print('Calling train_dataloader func')
@@ -212,10 +214,11 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
             self.test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
             self.val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
 
-            os.makedirs(f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp', exist_ok=True)
-            torch.save(self.train_loader, f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp/linear_train_loader_{self.name}.pth')
-            torch.save(self.test_loader, f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp/linear_test_loader_{self.name}.pth')
-            torch.save(self.val_loader, f'{os.environ["PSCRATCH"]}/{self.stream}_CATHODE_mlp/linear_val_loader_{self.name}.pth')
+            loaders_dir = get_scratch_dir(self.stream) / "loaders"
+            loaders_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(self.train_loader, loaders_dir / f"linear_train_loader_{self.name}.pth")
+            torch.save(self.test_loader, loaders_dir / f"linear_test_loader_{self.name}.pth")
+            torch.save(self.val_loader, loaders_dir / f"linear_val_loader_{self.name}.pth")
 
     def train_dataloader(self):
         print('Calling train_dataloader func')

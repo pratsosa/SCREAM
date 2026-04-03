@@ -11,6 +11,7 @@ import argparse
 import os
 import shutil
 
+import joblib
 import yaml
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -57,6 +58,11 @@ def main():
     data_module.setup("fit")
     steps_per_epoch = len(data_module.train_dataloader())
 
+    # Persist fitted scaler for use in evaluate.py
+    loaders_dir = get_scratch_dir(stream_cfg.name) / "loaders"
+    loaders_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(data_module.scaler, loaders_dir / f"scaler_{run_name}.pkl")
+
     # Model
     model = EM_LitLinearModel(
         input_dim=len(stream_cfg.features),
@@ -98,6 +104,13 @@ def main():
         every_n_epochs=1,
         save_top_k=-1,
     )
+    best_ckpt_callback = ModelCheckpoint(
+        dirpath=str(ckpt_dir),
+        filename="best",
+        monitor="True validation f1 score (0.8 thresh)",
+        mode="max",
+        save_top_k=1,
+    )
     early_stop_callback = EarlyStopping(
         monitor="True validation f1 score (0.8 thresh)",
         min_delta=0.0,
@@ -121,7 +134,7 @@ def main():
         log_every_n_steps=1,
         precision="16-mixed",
         logger=wandb_logger,
-        callbacks=[checkpoint_callback, early_stop_callback],
+        callbacks=[checkpoint_callback, best_ckpt_callback, early_stop_callback],
     )
 
     trainer.fit(model=model, datamodule=data_module)
