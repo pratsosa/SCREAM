@@ -9,6 +9,7 @@ Usage:
 """
 import argparse
 import os
+import shutil
 
 import yaml
 import lightning as L
@@ -77,6 +78,20 @@ def main():
 
     # Callbacks
     ckpt_dir = get_scratch_dir(stream_cfg.name) / "checkpoints" / run_name
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save configs for reproducibility
+    shutil.copy(args.stream, ckpt_dir / os.path.basename(args.stream))
+    shutil.copy(args.experiment, ckpt_dir / os.path.basename(args.experiment))
+    run_params = {
+        "stream": args.stream,
+        "experiment": args.experiment,
+        "seed": train_cfg.seed,
+        "run_name": run_name,
+    }
+    with open(ckpt_dir / "run_params.yaml", "w") as f:
+        yaml.dump(run_params, f, default_flow_style=False, sort_keys=False)
+
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(ckpt_dir),
         filename="{epoch}",
