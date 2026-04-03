@@ -51,6 +51,7 @@ def main():
         load_data_dir=stream_cfg.generated_data_path,
         batch_size=train_cfg.batch_size,
         p_wiggle=train_cfg.p_wiggle,
+        subsample_generated_seed=12345,
     )
     data_module.setup("fit")
     steps_per_epoch = len(data_module.train_dataloader())

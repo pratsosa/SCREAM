@@ -8,3 +8,6 @@ __pycache__/
 
 # SLURM output files
 *train_flow.out
+
+# wandb files
+wandb/

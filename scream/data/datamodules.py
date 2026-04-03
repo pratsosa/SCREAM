@@ -109,7 +109,8 @@ class CATHODELinearDataModule(L.LightningDataModule):
 class EM_CATHODELinearDataModule(L.LightningDataModule):
     def __init__(self, name, stream, load_data_dir=None,
                  batch_size=1024, train_pct=.8,
-                 load_dataloaders=False, p_wiggle=0):
+                 load_dataloaders=False, p_wiggle=0,
+                 subsample_generated_seed=None):
 
         super().__init__()
         seed_everything(12345)
@@ -120,14 +121,23 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
         self.name = name
         self.stream = stream
         self.p_wiggle = p_wiggle
+        self.subsample_generated_seed = subsample_generated_seed
 
     def setup(self, stage: str):
         if not self.load_dataloaders:
             if self.load_data_dir.endswith('.csv'):
                 df = pd.read_csv(self.load_data_dir)
-                df = Table.from_pandas(df)
             else:
-                df = Table.read(self.load_data_dir)
+                df = Table.read(self.load_data_dir).to_pandas()
+
+            if self.subsample_generated_seed is not None:
+                df1 = df[df["CWoLa_Label"] == 1]
+                df0 = df[df["CWoLa_Label"] == 0]
+                df0 = df0.sample(n=len(df1), random_state=self.subsample_generated_seed)
+                df = pd.concat([df1, df0], axis=0).reset_index(drop=True)
+                print(f"Subsampled generated data to 1:1 ratio — {len(df1)} observed, {len(df0)} generated")
+
+            df = Table.from_pandas(df)
 
             id = np.array(df['source_id'])
             ra = np.array(df['ra']).astype('float64')
