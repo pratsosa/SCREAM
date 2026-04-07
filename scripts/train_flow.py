@@ -96,6 +96,7 @@ def main():
         batch_size=args.batch_size,
         max_lr=args.max_lr,
         seed=args.seed,
+        patience=args.patience,
     )
 
     # Loss curve

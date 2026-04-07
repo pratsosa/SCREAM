@@ -30,9 +30,9 @@ def _load_fits(path: str) -> dict:
     G_mag  = np.array(df["phot_g_mean_mag"]).astype("float64")
     Bp_mag = np.array(df["phot_bp_mean_mag"]).astype("float64")
     Rp_mag = np.array(df["phot_rp_mean_mag"]).astype("float64")
-    g_mag  = np.array(df["gmag"]).astype("float64")   # 22.5 - 2.5*log10(ls_flux_g), pre-computed in data_prep
-    r_mag  = np.array(df["rmag"]).astype("float64")
-    z_mag  = np.array(df["zmag"]).astype("float64")
+    g_mag  = 22.5 - 2.5 * np.log10(np.array(df["ls_flux_g"]).astype("float64"))
+    r_mag  = 22.5 - 2.5 * np.log10(np.array(df["ls_flux_r"]).astype("float64"))
+    z_mag  = 22.5 - 2.5 * np.log10(np.array(df["ls_flux_z"]).astype("float64"))
 
     # Error columns — fed to NF as data columns
     phot_g_flux_err  = np.array(df["phot_g_mean_flux_error"]).astype("float64")
@@ -101,7 +101,7 @@ def _apply_percentile_mask(full_embeddings: np.ndarray, skip_cols: list[int],
 
 
 def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
-               max_lr: float = 3e-4, seed: int = 12345):
+               max_lr: float = 3e-4, seed: int = 12345, patience: int | None = 20):
     """Train a normalizing flow on the sideband region.
 
     Parameters
@@ -128,18 +128,8 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
         Boolean mask identifying the signal region rows (post percentile cut).
     full_embeddings : np.ndarray
         Unscaled full feature matrix (signal + sideband) after percentile cut,
-        shape (N, 20) with columns in col_names order. Does NOT include ebv
-        (ebv is not a NF column and is passed separately).
-    ebv : np.ndarray
-        EBV values (ls_ebv) aligned with rows of full_embeddings, shape (N,).
-        Real signal-region stars carry their true ebv; the sampler assigns
-        -999 to generated stars as a placeholder for dev/assign_ebv.py.
-    source_id : np.ndarray
-        Source IDs aligned with rows of full_embeddings.
-    stream : np.ndarray
-        Stream membership flags aligned with rows of full_embeddings.
-    col_names : list[str]
-        Ordered column names for full_embeddings (cond col first).
+        shape (N, D) with columns in col_names order. Sampler uses this to
+        build the signal-region dataframe and to fit the KDE.
     train_losses : list
         Per-epoch training losses from ``pzflow.Flow.train``.
     test_losses : list
@@ -244,7 +234,7 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
         df_train, df_test,
         verbose=True, epochs=num_epochs,
         progress_bar=False, batch_size=batch_size,
-        optimizer=opt,
+        optimizer=opt, patience = patience
     )
 
     return flow, scaler, signal_mask, full_embeddings, ebv, source_id, stream, col_names, train_losses, test_losses
