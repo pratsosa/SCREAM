@@ -20,21 +20,36 @@ def _load_fits(path: str) -> dict:
     """Read the raw GD-1 FITS file and return a dict of named arrays."""
     df = Table.read(path)
 
-    ra = np.array(df["phi1"]).astype("float64")
-    dec = np.array(df["phi2"]).astype("float64")
-    pm_ra = np.array(df["pm_phi1"]).astype("float64")
-    pm_dec = np.array(df["pm_phi2"]).astype("float64")
-    pm_ra_error = np.array(df["pmra_error"]).astype("float64")
-    pm_dec_error = np.array(df["pmdec_error"]).astype("float64")
-    gmag = np.array(df["phot_g_mean_mag"])
-    color = np.array(df["phot_bp_mean_mag"]) - np.array(df["phot_rp_mean_mag"])
-    gmag0 = np.array(df["gmag0"])
-    rmag0 = np.array(df["rmag0"])
-    zmag0 = np.array(df["zmag0"])
-    g_r = gmag0 - rmag0
-    r_z = rmag0 - zmag0
+    # Stream-frame astrometry
+    phi1    = np.array(df["phi1"]).astype("float64")
+    phi2    = np.array(df["phi2"]).astype("float64")
+    pm_phi1 = np.array(df["pm_phi1"]).astype("float64")   # conditioning column
+    pm_phi2 = np.array(df["pm_phi2"]).astype("float64")
 
-    stream = np.array(df["stream"])
+    # Raw (non-extinction-corrected) photometric magnitudes
+    G_mag  = np.array(df["phot_g_mean_mag"]).astype("float64")
+    Bp_mag = np.array(df["phot_bp_mean_mag"]).astype("float64")
+    Rp_mag = np.array(df["phot_rp_mean_mag"]).astype("float64")
+    g_mag  = np.array(df["gmag"]).astype("float64")   # 22.5 - 2.5*log10(ls_flux_g), pre-computed in data_prep
+    r_mag  = np.array(df["rmag"]).astype("float64")
+    z_mag  = np.array(df["zmag"]).astype("float64")
+
+    # Error columns — fed to NF as data columns
+    phot_g_flux_err  = np.array(df["phot_g_mean_flux_error"]).astype("float64")
+    phot_bp_flux_err = np.array(df["phot_bp_mean_flux_error"]).astype("float64")
+    phot_rp_flux_err = np.array(df["phot_rp_mean_flux_error"]).astype("float64")
+    flux_err_g       = np.array(df["flux_err_g"]).astype("float64")
+    flux_err_r       = np.array(df["flux_err_r"]).astype("float64")
+    flux_err_z       = np.array(df["flux_err_z"]).astype("float64")
+    pmra_error       = np.array(df["pmra_error"]).astype("float64")
+    pmdec_error      = np.array(df["pmdec_error"]).astype("float64")
+    ra_error         = np.array(df["ra_error"]).astype("float64")   # degrees (converted in data_prep)
+    dec_error        = np.array(df["dec_error"]).astype("float64")  # degrees (converted in data_prep)
+
+    # EBV — NOT a NF column; passed through separately for sampler
+    ebv = np.array(df["ls_ebv"]).astype("float64")
+
+    stream    = np.array(df["stream"])
     source_id = np.array(df["source_id"])
 
     if "signal_region" in df.colnames:
@@ -43,9 +58,16 @@ def _load_fits(path: str) -> dict:
         signal_region = None
 
     return dict(
-        ra=ra, dec=dec, pm_ra=pm_ra, pm_dec=pm_dec,
-        pm_ra_error=pm_ra_error, pm_dec_error=pm_dec_error,
-        gmag=gmag, color=color, rmag0=rmag0, g_r=g_r, r_z=r_z,
+        phi1=phi1, phi2=phi2, pm_phi1=pm_phi1, pm_phi2=pm_phi2,
+        G_mag=G_mag, Bp_mag=Bp_mag, Rp_mag=Rp_mag,
+        g_mag=g_mag, r_mag=r_mag, z_mag=z_mag,
+        phot_g_flux_err=phot_g_flux_err,
+        phot_bp_flux_err=phot_bp_flux_err,
+        phot_rp_flux_err=phot_rp_flux_err,
+        flux_err_g=flux_err_g, flux_err_r=flux_err_r, flux_err_z=flux_err_z,
+        pmra_error=pmra_error, pmdec_error=pmdec_error,
+        ra_error=ra_error, dec_error=dec_error,
+        ebv=ebv,
         stream=stream, source_id=source_id,
         signal_region=signal_region,
     )
@@ -61,7 +83,7 @@ def _build_signal_mask(arrays: dict, cfg: StreamConfig) -> np.ndarray:
             )
         return arrays["signal_region"]
     lo, hi = cfg.pm_ra_signal_range
-    return (arrays["pm_ra"] >= lo) & (arrays["pm_ra"] <= hi)
+    return (arrays["pm_phi1"] >= lo) & (arrays["pm_phi1"] <= hi)
 
 
 def _apply_percentile_mask(full_embeddings: np.ndarray, skip_cols: list[int],
@@ -106,8 +128,18 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
         Boolean mask identifying the signal region rows (post percentile cut).
     full_embeddings : np.ndarray
         Unscaled full feature matrix (signal + sideband) after percentile cut,
-        shape (N, D) with columns in col_names order. Sampler uses this to
-        build the signal-region dataframe and to fit the KDE.
+        shape (N, 20) with columns in col_names order. Does NOT include ebv
+        (ebv is not a NF column and is passed separately).
+    ebv : np.ndarray
+        EBV values (ls_ebv) aligned with rows of full_embeddings, shape (N,).
+        Real signal-region stars carry their true ebv; the sampler assigns
+        -999 to generated stars as a placeholder for dev/assign_ebv.py.
+    source_id : np.ndarray
+        Source IDs aligned with rows of full_embeddings.
+    stream : np.ndarray
+        Stream membership flags aligned with rows of full_embeddings.
+    col_names : list[str]
+        Ordered column names for full_embeddings (cond col first).
     train_losses : list
         Per-epoch training losses from ``pzflow.Flow.train``.
     test_losses : list
@@ -119,7 +151,7 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
     from pzflow.bijectors import Chain, ShiftBounds, RollingSplineCoupling
     from pzflow.distributions import CentBeta13
 
-    col_names = cfg.flow_cond_columns + cfg.flow_data_columns  # pm_ra first
+    col_names = cfg.flow_cond_columns + cfg.flow_data_columns  # pm_phi1 first
     data_col_names = cfg.flow_data_columns
     cond_col_names = cfg.flow_cond_columns
 
@@ -127,12 +159,20 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
 
     # Stack full feature matrix in col_names order for scaling
     col_map = {
-        "ra": arrays["ra"], "dec": arrays["dec"],
-        "pm_ra": arrays["pm_ra"], "pm_dec": arrays["pm_dec"],
-        "pm_ra_error": arrays["pm_ra_error"],
-        "pm_dec_error": arrays["pm_dec_error"],
-        "gmag": arrays["gmag"], "color": arrays["color"],
-        "rmag0": arrays["rmag0"], "g_r": arrays["g_r"], "r_z": arrays["r_z"],
+        "phi1": arrays["phi1"], "phi2": arrays["phi2"],
+        "pm_phi1": arrays["pm_phi1"], "pm_phi2": arrays["pm_phi2"],
+        "G_mag": arrays["G_mag"], "Bp_mag": arrays["Bp_mag"], "Rp_mag": arrays["Rp_mag"],
+        "g_mag": arrays["g_mag"], "r_mag": arrays["r_mag"], "z_mag": arrays["z_mag"],
+        "phot_g_flux_err": arrays["phot_g_flux_err"],
+        "phot_bp_flux_err": arrays["phot_bp_flux_err"],
+        "phot_rp_flux_err": arrays["phot_rp_flux_err"],
+        "flux_err_g": arrays["flux_err_g"],
+        "flux_err_r": arrays["flux_err_r"],
+        "flux_err_z": arrays["flux_err_z"],
+        "pmra_error": arrays["pmra_error"],
+        "pmdec_error": arrays["pmdec_error"],
+        "ra_error": arrays["ra_error"],
+        "dec_error": arrays["dec_error"],
     }
     full_embeddings = np.column_stack([col_map[c] for c in col_names])
 
@@ -140,11 +180,10 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
     scaler = StandardScaler()
     scaler.fit(full_embeddings)
 
-    # Percentile mask: skip ra, dec, gmag (no natural outlier boundary)
-    ra_idx = col_names.index("ra")
-    dec_idx = col_names.index("dec")
-    gmag_idx = col_names.index("gmag")
-    skip_cols = [ra_idx, dec_idx, gmag_idx]
+    # Percentile mask: skip phi1, phi2, G_mag (no natural outlier boundary)
+    skip_cols = [col_names.index("phi1"),
+                 col_names.index("phi2"),
+                 col_names.index("G_mag")]
 
     signal_mask_raw = _build_signal_mask(arrays, cfg)
     perc_mask = _apply_percentile_mask(full_embeddings, skip_cols)
@@ -153,6 +192,7 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
     signal_mask = signal_mask_raw[perc_mask]
     stream = arrays["stream"][perc_mask]
     source_id = arrays["source_id"][perc_mask]
+    ebv = arrays["ebv"][perc_mask]
 
     # Scale and split sideband into train/test
     full_embeddings_scaled = scaler.transform(full_embeddings)
@@ -207,4 +247,4 @@ def train_flow(cfg: StreamConfig, num_epochs: int = 200, batch_size: int = 512,
         optimizer=opt,
     )
 
-    return flow, scaler, signal_mask, full_embeddings, source_id, stream, col_names, train_losses, test_losses
+    return flow, scaler, signal_mask, full_embeddings, ebv, source_id, stream, col_names, train_losses, test_losses

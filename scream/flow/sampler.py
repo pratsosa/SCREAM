@@ -22,6 +22,7 @@ def generate_samples(
     scaler: StandardScaler,
     signal_mask: np.ndarray,
     full_embeddings: np.ndarray,
+    ebv: np.ndarray,
     source_id: np.ndarray,
     stream: np.ndarray,
     col_names: list[str],
@@ -42,13 +43,18 @@ def generate_samples(
         Boolean mask identifying signal-region rows in ``full_embeddings``.
     full_embeddings : np.ndarray
         Raw (unscaled) full feature matrix after percentile cut, shape (N, D).
+        Does NOT include ebv (ebv is passed separately).
+    ebv : np.ndarray
+        EBV values aligned with rows of ``full_embeddings``.  Real signal-region
+        stars carry their true ls_ebv; generated stars are assigned -999 as a
+        placeholder to be filled by dev/assign_ebv.py.
     source_id : np.ndarray
         Source IDs aligned with rows of ``full_embeddings``.
     stream : np.ndarray
         Stream membership flags aligned with rows of ``full_embeddings``.
     col_names : list[str]
         Column names corresponding to columns of ``full_embeddings``.
-        First entry must be the conditioning column (pm_ra).
+        First entry must be the conditioning column (pm_phi1).
     cfg : StreamConfig
         Stream configuration — used to get ``flow_cond_columns`` and the
         output path.
@@ -56,7 +62,7 @@ def generate_samples(
         Number of generated samples per signal-region star (default 4, as
         recommended in the CATHODE paper).
     kde_bandwidth : float
-        Bandwidth for the KDE fit to the signal-region pm_ra distribution.
+        Bandwidth for the KDE fit to the signal-region pm_phi1 distribution.
     seed : int
         Random seed for KDE sampling.
 
@@ -65,10 +71,10 @@ def generate_samples(
     pd.DataFrame
         Combined dataframe of real signal-region stars and generated background
         samples, with columns:
-        [*col_names, stream, CWoLa_Label, source_id]
+        [*col_names, ebv, stream, CWoLa_Label, source_id]
         Ready to be written to ``cfg.generated_data_path``.
     """
-    cond_col = cfg.flow_cond_columns[0]  # "pm_ra"
+    cond_col = cfg.flow_cond_columns[0]  # "pm_phi1"
     cond_idx = col_names.index(cond_col)
 
     # Fit KDE to signal-region pm_ra (unscaled)
@@ -104,11 +110,14 @@ def generate_samples(
     # Build signal-region real-data dataframe
     signal_arr = full_embeddings[signal_mask]
     signal_df = pd.DataFrame(data=signal_arr, columns=col_names)
+    signal_df["ebv"] = ebv[signal_mask]
     signal_df["stream"] = stream[signal_mask].astype(int)
     signal_df["CWoLa_Label"] = 1
     signal_df["source_id"] = source_id[signal_mask]
 
     # Generated background: stream=2 (convention from original script), label=0
+    # ebv=-999 is a placeholder; dev/assign_ebv.py fills in real values.
+    samples_df["ebv"] = -999.0
     samples_df["stream"] = 2
     samples_df["CWoLa_Label"] = 0
     samples_df["source_id"] = -1

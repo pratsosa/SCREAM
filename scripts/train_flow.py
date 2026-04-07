@@ -89,7 +89,7 @@ def main():
 
     # Train flow
     print(f"\n--- Training flow ({args.epochs} epochs) ---")
-    flow, scaler, signal_mask, full_embeddings, source_id, stream, col_names, \
+    flow, scaler, signal_mask, full_embeddings, ebv, source_id, stream, col_names, \
         train_losses, test_losses = train_flow(
         cfg,
         num_epochs=args.epochs,
@@ -106,7 +106,7 @@ def main():
     # Generate samples
     print(f"\n--- Generating background samples (x{args.n_multiplier} signal region) ---")
     df = generate_samples(
-        flow, scaler, signal_mask, full_embeddings,
+        flow, scaler, signal_mask, full_embeddings, ebv,
         source_id, stream, col_names, cfg,
         n_multiplier=args.n_multiplier,
         seed=args.seed,

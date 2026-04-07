@@ -4,41 +4,60 @@ name: gd1
 raw_data_path: /pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_stream_prep.fits
 
 # Output of train_flow.py; input to train_em_cathode.py
-generated_data_path: /pscratch/sd/p/pratsosa/GD1_SCREAM/generated/gd1_generated.csv
+# generated_data_path: /pscratch/sd/p/pratsosa/GD1_SCREAM/generated/gd1_generated.csv
+generated_data_path: /global/homes/p/pratsosa/Notebooks/GD1_errs_LS_CATHODE_4HL_128_HD_16K_3e4LR_200epochs.csv
 
-# Features consumed by the MLP DataModule (order matters — matches embeddings column order)
+# Features consumed by the MLP DataModule (post-sampling + extinction correction, in column order)
 features:
-  - ra
-  - dec
-  - pm_ra
-  - pm_dec
-  - gmag
-  - color
+  - phi1
+  - phi2
+  - pm_phi1
+  - pm_phi2
+  - G0
+  - Bp0_Rp0
   - rmag0
-  - g_r
-  - r_z
+  - g0_r0
+  - r0_z0
 
-# Astrometric error features for EM-CATHODE marginalisation
+# Error tensor column order (EBV always last)
 error_features:
-  - pm_ra_error
-  - pm_dec_error
+  - phot_g_flux_err
+  - phot_bp_flux_err
+  - phot_rp_flux_err
+  - flux_err_g
+  - flux_err_r
+  - flux_err_z
+  - pmra_error
+  - pmdec_error
+  - ra_error
+  - dec_error
+  - ebv
 
 # Normalizing flow: data columns (all columns except the conditioning column)
 flow_data_columns:
-  - ra
-  - dec
-  - pm_dec
-  - pm_ra_error
-  - pm_dec_error
-  - gmag
-  - color
-  - rmag0
-  - g_r
-  - r_z
+  - phi1
+  - phi2
+  - pm_phi2
+  - G_mag
+  - Bp_mag
+  - Rp_mag
+  - g_mag
+  - r_mag
+  - z_mag
+  - phot_g_flux_err
+  - phot_bp_flux_err
+  - phot_rp_flux_err
+  - flux_err_g
+  - flux_err_r
+  - flux_err_z
+  - pmra_error
+  - pmdec_error
+  - ra_error
+  - dec_error
 
 # Normalizing flow: conditioning column
 flow_cond_columns:
-  - pm_ra
+  - pm_phi1
 
 # Signal region definition.
 # null → use the pre-computed 'signal_region' boolean column in the raw FITS file.
