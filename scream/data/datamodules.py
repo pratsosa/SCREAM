@@ -149,6 +149,16 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
             else:
                 df = Table.read(self.load_data_dir).to_pandas()
 
+            # Drop rows with non-positive flux errors (NF can occasionally generate
+            # unphysical negative values; these cause divergence in extinction_gaia).
+            flux_err_cols = ['phot_g_flux_err', 'phot_bp_flux_err', 'phot_rp_flux_err',
+                             'flux_err_g', 'flux_err_r', 'flux_err_z']
+            n_before = len(df)
+            df = df[(df[flux_err_cols] > 0).all(axis=1)].reset_index(drop=True)
+            n_dropped = n_before - len(df)
+            if n_dropped > 0:
+                print(f"Dropped {n_dropped} rows with non-positive flux errors")
+
             if self.subsample_generated_seed is not None:
                 df1 = df[df["CWoLa_Label"] == 1]
                 df0 = df[df["CWoLa_Label"] == 0]

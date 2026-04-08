@@ -56,7 +56,7 @@ def extinction_gaia(G: Tensor, Bp: Tensor, Rp: Tensor, ebv: Tensor,
     A_band = F(bprp) * A0,   A0 = 3.1 * ebv
     """
     A0 = 3.1 * ebv
-    curbp = Bp - Rp
+    curbp = (Bp - Rp).clamp(min=-2.0, max=5.0)
     for _ in range(n_iter):
         AG  = (0.9761 + (-0.1704)*curbp + 0.0086*curbp**2 + 0.0011*curbp**3
                + (-0.0438)*A0 + 0.0013*A0**2 + 0.0099*curbp*A0) * A0
@@ -64,5 +64,5 @@ def extinction_gaia(G: Tensor, Bp: Tensor, Rp: Tensor, ebv: Tensor,
                + (-0.0230)*A0 + 0.0006*A0**2 + 0.0043*curbp*A0) * A0
         ARp = (0.6104 + (-0.0170)*curbp + (-0.0026)*curbp**2 + (-0.0017)*curbp**3
                + (-0.0078)*A0 + 0.00005*A0**2 + 0.0006*curbp*A0) * A0
-        curbp = (Bp - Rp) - ABp + ARp
+        curbp = ((Bp - Rp) - ABp + ARp).clamp(min=-2.0, max=5.0)
     return AG, ABp, ARp
