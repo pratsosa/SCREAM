@@ -5,14 +5,23 @@ from sklearn.metrics import f1_score, matthews_corrcoef
 
 from scream.models.mlp import LinearModel
 from scream.losses.mc_marginal import mc_marginal_bce_loss
+from scream.data.photometry import (
+    flux_to_mag_gaia, mag_to_flux_gaia,
+    flux_to_mag_ls, mag_to_flux_ls,
+    extinction_gaia, extinction_ls,
+    ZP_G, ZP_BP, ZP_RP,
+)
 
 
 class EM_LitLinearModel(L.LightningModule):
     # This model will implement EM with MC marginal BCE loss
     # To do so I will need to sample from the error distributions of the features during training and evaluation (before passing to the model)
-    def __init__(self, lr, input_dim, EPOCHS, steps_per_epoch, pos_weight, num_layers=3,
-                 hidden_units=256, dropout=0.0, num_mc_samples=10, pct_start=0.3, weight_decay=0.0, layer_norm=False,
-                 activation='relu', residual=False, anneal_noise=False, noise_anneal_type='linear_decay', noise_anneal_dict=None):
+    def __init__(self, lr, input_dim, EPOCHS, steps_per_epoch, pos_weight,
+                 scaler_mean: np.ndarray, scaler_scale: np.ndarray,
+                 n_extinction_iter: int = 10,
+                 num_layers=3, hidden_units=256, dropout=0.0, num_mc_samples=10,
+                 pct_start=0.3, weight_decay=0.0, layer_norm=False,
+                 activation='relu', residual=False):
         super().__init__()
         self.model = LinearModel(input_dim, num_layers=num_layers, hidden_units=hidden_units, dropout=dropout,
                                  layer_norm=layer_norm, activation=activation, residual=residual)
@@ -21,11 +30,14 @@ class EM_LitLinearModel(L.LightningModule):
         self.num_mc_samples = num_mc_samples
         self.pct_start = pct_start
         self.weight_decay = weight_decay
+        self.n_extinction_iter = n_extinction_iter
 
-        self.anneal_noise = anneal_noise
-        self.noise_anneal_type = noise_anneal_type
-        self.noise_anneal_dict = noise_anneal_dict
-        self.save_hyperparameters()
+        self.register_buffer('scaler_mean',
+                             torch.tensor(scaler_mean, dtype=torch.float32))
+        self.register_buffer('scaler_scale',
+                             torch.tensor(scaler_scale, dtype=torch.float32))
+
+        self.save_hyperparameters(ignore=['scaler_mean', 'scaler_scale'])
 
         self.logits = []
         self.labels = []
@@ -36,32 +48,91 @@ class EM_LitLinearModel(L.LightningModule):
         self.steps_per_epoch = steps_per_epoch
 
     def shared_step(self, batch, stage: str):
-        x, y, errors, _ = batch
-        # x shape: (B, D)
-        # errors shape: (B, D)
+        x_raw, y, errors, _ = batch
+        # x_raw shape: (B, 10)  — phi1, phi2, pm_phi1, pm_phi2, G_mag, Bp_mag, Rp_mag, g_mag, r_mag, z_mag
+        # errors shape: (B, 11) — phot_g_flux_err, phot_bp_flux_err, phot_rp_flux_err,
+        #                          flux_err_g, flux_err_r, flux_err_z,
+        #                          pmra_error, pmdec_error, ra_error, dec_error,
+        #                          ebv (index 10)
 
-        # Sample from the error distributions, num_mc_samples times
-        B, D = x.shape
-        noise_factor = self.noise_scale_factor()
+        B = x_raw.shape[0]
+        N_mc = self.num_mc_samples
 
-        err_mask = torch.ones_like(errors, dtype=torch.bool)
-        err_mask[:, 3] = False
-        err_mask[:, 4] = False
-        errors = torch.where(err_mask, noise_factor * errors, errors)
+        # --- Step 1: Unpack ---
+        phi1, phi2, pm_phi1, pm_phi2 = x_raw[:, 0], x_raw[:, 1], x_raw[:, 2], x_raw[:, 3]
+        G_mag, Bp_mag, Rp_mag        = x_raw[:, 4], x_raw[:, 5], x_raw[:, 6]
+        g_mag, r_mag, z_mag          = x_raw[:, 7], x_raw[:, 8], x_raw[:, 9]
 
-        x_samples = x.unsqueeze(1) + torch.randn(B, self.num_mc_samples, D).to(x.device) * errors.unsqueeze(1)
+        phot_flux_errs              = errors[:, :6]      # (B, 6): G_err, Bp_err, Rp_err, g_err, r_err, z_err
+        pmra_err, pmdec_err         = errors[:, 6], errors[:, 7]
+        ra_err, dec_err             = errors[:, 8], errors[:, 9]   # degrees (converted from mas in GD1_data_prep.py)
+        ebv                         = errors[:, 10]                # (B,)
 
-        assert x_samples.shape == (B, self.num_mc_samples, D), f"Expected shape (B, {self.num_mc_samples}, D), got {x_samples.shape}"
+        # --- Step 2: Convert photometric mags -> fluxes (B,) each ---
+        flux_G  = mag_to_flux_gaia(G_mag,  ZP_G)
+        flux_Bp = mag_to_flux_gaia(Bp_mag, ZP_BP)
+        flux_Rp = mag_to_flux_gaia(Rp_mag, ZP_RP)
+        flux_g  = mag_to_flux_ls(g_mag)
+        flux_r  = mag_to_flux_ls(r_mag)
+        flux_z  = mag_to_flux_ls(z_mag)
 
-        if torch.isnan(x_samples).any() or torch.isinf(x_samples).any():
-            raise RuntimeError("x_samples contains NaN/Inf")
+        # --- Step 3: Stack fluxes and errors (B, 6) ---
+        fluxes = torch.stack([flux_G, flux_Bp, flux_Rp, flux_g, flux_r, flux_z], dim=1)
 
-        y_pred = self.model(x_samples).squeeze(-1)
+        # --- Step 4: Sample N_mc flux realisations (B, N_mc, 6) ---
+        noise          = torch.randn(B, N_mc, 6, device=x_raw.device)
+        fluxes_sampled = fluxes.unsqueeze(1) + noise * phot_flux_errs.unsqueeze(1)
+        fluxes_sampled = fluxes_sampled.clamp(min=1e-10)
+
+        # --- Step 5: Convert sampled fluxes back to magnitudes (B, N_mc) each ---
+        G_s  = flux_to_mag_gaia(fluxes_sampled[:, :, 0], ZP_G)
+        Bp_s = flux_to_mag_gaia(fluxes_sampled[:, :, 1], ZP_BP)
+        Rp_s = flux_to_mag_gaia(fluxes_sampled[:, :, 2], ZP_RP)
+        g_s  = flux_to_mag_ls(fluxes_sampled[:, :, 3])
+        r_s  = flux_to_mag_ls(fluxes_sampled[:, :, 4])
+        z_s  = flux_to_mag_ls(fluxes_sampled[:, :, 5])
+
+        # --- Step 6: Apply extinction correction (B, N_mc) each ---
+        ebv_e = ebv.unsqueeze(1).expand(B, N_mc)
+        AG, ABp, ARp = extinction_gaia(G_s, Bp_s, Rp_s, ebv_e, n_iter=self.n_extinction_iter)
+        Ag, Ar, Az   = extinction_ls(ebv_e)
+        G0  = G_s  - AG;  Bp0 = Bp_s - ABp;  Rp0 = Rp_s - ARp
+        g0  = g_s  - Ag;  r0  = r_s  - Ar;   z0  = z_s  - Az
+
+        # --- Step 7: Compute colors (B, N_mc) ---
+        BpRp0 = Bp0 - Rp0
+        gr0   = g0  - r0
+        rz0   = r0  - z0
+        # r0 is used directly as rmag0 (extinction-corrected LS r-band magnitude)
+
+        # --- Step 8: Sample astrometric errors (B, N_mc) each ---
+        # pmra_error / pmdec_error used as proxies for pm_phi1 / pm_phi2 stream-frame errors
+        # ra_error / dec_error already in degrees (converted from mas in GD1_data_prep.py)
+        # TECH DEBT: proper treatment requires Jacobian of the stream-frame transform
+        ast_noise = torch.randn(B, N_mc, 4, device=x_raw.device)
+        phi1_s    = phi1.unsqueeze(1) + ast_noise[:, :, 0] * ra_err.unsqueeze(1)
+        phi2_s    = phi2.unsqueeze(1) + ast_noise[:, :, 1] * dec_err.unsqueeze(1)
+        pm_phi1_s = pm_phi1.unsqueeze(1) + ast_noise[:, :, 2] * pmra_err.unsqueeze(1)
+        pm_phi2_s = pm_phi2.unsqueeze(1) + ast_noise[:, :, 3] * pmdec_err.unsqueeze(1)
+
+        # --- Step 9: Stack final MLP input (B, N_mc, 9) ---
+        x_samples = torch.stack([phi1_s, phi2_s, pm_phi1_s, pm_phi2_s,
+                                  G0, BpRp0, r0, gr0, rz0], dim=-1)
+
+        # --- Step 10: Scale using registered buffers (B, N_mc, 9) ---
+        x_scaled = (x_samples - self.scaler_mean) / self.scaler_scale
+
+        if torch.isnan(x_scaled).any() or torch.isinf(x_scaled).any():
+            raise RuntimeError("x_scaled contains NaN/Inf")
+
+        # --- Step 11: Forward pass ---
+        y_pred = self.model(x_scaled).squeeze(-1)   # (B, N_mc)
+
         if torch.isnan(y_pred).any() or torch.isinf(y_pred).any():
             raise RuntimeError("y_pred contains NaN/Inf")
-        assert y_pred.shape == (B, self.num_mc_samples), f"Expected shape (B, {self.num_mc_samples}), got {y_pred.shape}"
+        assert y_pred.shape == (B, N_mc), f"Expected shape (B, {N_mc}), got {y_pred.shape}"
 
-        y_pred = y_pred.permute(1, 0)  # Shape: (num_mc_samples, B)
+        y_pred = y_pred.permute(1, 0)  # Shape: (N_mc, B)
 
         y_cwola = y[:, 0]
         y_true = y[:, 1]
@@ -232,32 +303,3 @@ class EM_LitLinearModel(L.LightningModule):
         if torch.isnan(loss) or torch.isinf(loss):
             print("[Loss NaN/Inf detected]")
             self.log("debug/loss_nan_inf", 1)
-
-    def noise_scale_factor(self):
-        """Return a scalar in [noise_anneal_min, 1] depending on training progress."""
-        if not self.anneal_noise or not self.training:
-            return 1.0
-
-        total_steps = self.steps_per_epoch * self.EPOCHS
-        t = min(1.0, self.global_step / total_steps)
-
-        noise_anneal_min = self.noise_anneal_dict['noise_anneal_min']
-
-        if self.noise_anneal_type == "linear_decay":
-            return 1.0 - (1.0 - noise_anneal_min) * t
-
-        elif self.noise_anneal_type == "cosine":
-            f_max = self.noise_anneal_dict['f_max']
-            t_peak = self.noise_anneal_dict['t_peak']
-
-            if t < t_peak:
-                return 1 + 0.5 * (f_max - 1) * (1 - np.cos(np.pi * t / t_peak))
-            else:
-                return noise_anneal_min + 0.5 * (f_max - noise_anneal_min) * (
-                    1 + np.cos(np.pi * (t - t_peak) / (1 - t_peak))
-                )
-
-        elif self.noise_anneal_type == "exp":
-            return noise_anneal_min + (1 - noise_anneal_min) * np.exp(-5 * t)
-
-        return 1.0

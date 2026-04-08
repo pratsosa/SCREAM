@@ -108,10 +108,28 @@ class CATHODELinearDataModule(L.LightningDataModule):
         return self.test_loader
 
 
+def _gaia_extinction_numpy(G, Bp, Rp, ebv, n_iter=10):
+    """
+    Numpy port of mw_extinction_gaia (dev/transforms.py) using 10 iterations.
+    Returns (A_G, A_Bp, A_Rp) in magnitudes.
+    """
+    A0 = 3.1 * ebv
+    curbp = Bp - Rp
+    for _ in range(n_iter):
+        AG  = (0.9761 + (-0.1704)*curbp + 0.0086*curbp**2 + 0.0011*curbp**3
+               + (-0.0438)*A0 + 0.0013*A0**2 + 0.0099*curbp*A0) * A0
+        ABp = (1.1517 + (-0.0871)*curbp + (-0.0333)*curbp**2 + 0.0173*curbp**3
+               + (-0.0230)*A0 + 0.0006*A0**2 + 0.0043*curbp*A0) * A0
+        ARp = (0.6104 + (-0.0170)*curbp + (-0.0026)*curbp**2 + (-0.0017)*curbp**3
+               + (-0.0078)*A0 + 0.00005*A0**2 + 0.0006*curbp*A0) * A0
+        curbp = (Bp - Rp) - ABp + ARp
+    return AG, ABp, ARp
+
+
 class EM_CATHODELinearDataModule(L.LightningDataModule):
     def __init__(self, name, stream, load_data_dir=None,
                  batch_size=1024, train_pct=.8,
-                 load_dataloaders=False, p_wiggle=0,
+                 load_dataloaders=False,
                  subsample_generated_seed=None):
 
         super().__init__()
@@ -122,7 +140,6 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
         self.load_dataloaders = load_dataloaders
         self.name = name
         self.stream = stream
-        self.p_wiggle = p_wiggle
         self.subsample_generated_seed = subsample_generated_seed
 
     def setup(self, stage: str):
@@ -139,75 +156,85 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
                 df = pd.concat([df1, df0], axis=0).reset_index(drop=True)
                 print(f"Subsampled generated data to 1:1 ratio — {len(df1)} observed, {len(df0)} generated")
 
-            df = Table.from_pandas(df)
+            # --- Raw feature columns (N, 10) — unscaled, fed to dataset as-is ---
+            phi1    = np.array(df['phi1']).astype('float64')
+            phi2    = np.array(df['phi2']).astype('float64')
+            pm_phi1 = np.array(df['pm_phi1']).astype('float64')
+            pm_phi2 = np.array(df['pm_phi2']).astype('float64')
+            G_mag   = np.array(df['G_mag']).astype('float64')
+            Bp_mag  = np.array(df['Bp_mag']).astype('float64')
+            Rp_mag  = np.array(df['Rp_mag']).astype('float64')
+            g_mag   = np.array(df['g_mag']).astype('float64')
+            r_mag   = np.array(df['r_mag']).astype('float64')
+            z_mag   = np.array(df['z_mag']).astype('float64')
 
-            id = np.array(df['source_id'])
-            ra = np.array(df['ra']).astype('float64')
-            dec = np.array(df['dec']).astype('float64')
+            raw_features = np.column_stack([phi1, phi2, pm_phi1, pm_phi2,
+                                             G_mag, Bp_mag, Rp_mag, g_mag, r_mag, z_mag])
+            print(f'Total nan values in raw_features: {np.sum(np.isnan(raw_features))}')
 
-            pm_ra = np.array(df['pm_ra']).astype('float64')
-            pm_dec = np.array(df['pm_dec']).astype('float64')
+            # --- Error columns (N, 11) — EBV packed last, passed unscaled ---
+            phot_g_flux_err  = np.array(df['phot_g_flux_err']).astype('float64')
+            phot_bp_flux_err = np.array(df['phot_bp_flux_err']).astype('float64')
+            phot_rp_flux_err = np.array(df['phot_rp_flux_err']).astype('float64')
+            flux_err_g       = np.array(df['flux_err_g']).astype('float64')
+            flux_err_r       = np.array(df['flux_err_r']).astype('float64')
+            flux_err_z       = np.array(df['flux_err_z']).astype('float64')
+            pmra_error       = np.array(df['pmra_error']).astype('float64')
+            pmdec_error      = np.array(df['pmdec_error']).astype('float64')
+            ra_error         = np.array(df['ra_error']).astype('float64')
+            dec_error        = np.array(df['dec_error']).astype('float64')
+            ebv              = np.array(df['ebv']).astype('float64')
 
-            gmag = np.array(df['gmag'])
-            color = np.array(df['color'])
+            errors = np.column_stack([phot_g_flux_err, phot_bp_flux_err, phot_rp_flux_err,
+                                       flux_err_g, flux_err_r, flux_err_z,
+                                       pmra_error, pmdec_error, ra_error, dec_error,
+                                       ebv])
 
-            pm_ra_error = np.array(df['pm_ra_error']).astype('float64')
-            pm_dec_error = np.array(df['pm_dec_error']).astype('float64')
+            # --- Compute extinction-corrected MLP features for scaler fitting ---
+            AG, ABp, ARp = _gaia_extinction_numpy(G_mag, Bp_mag, Rp_mag, ebv)
+            G0    = G_mag  - AG
+            Bp0   = Bp_mag - ABp
+            Rp0   = Rp_mag - ARp
+            g0    = g_mag  - 3.214 * ebv
+            r0    = r_mag  - 2.165 * ebv
+            z0    = z_mag  - 1.211 * ebv
+            BpRp0 = Bp0 - Rp0
+            gr0   = g0  - r0
+            rz0   = r0  - z0
 
-            rmag0 = np.array(df['rmag0'])
-            g_r = np.array(df['g_r'])
-            r_z = np.array(df['r_z'])
+            mlp_features = np.column_stack([phi1, phi2, pm_phi1, pm_phi2,
+                                             G0, BpRp0, r0, gr0, rz0])
+            print(f'Total nan values in mlp_features: {np.sum(np.isnan(mlp_features))}')
+
+            train_mask, val_mask, test_mask = get_mask_splits(raw_features, self.train_pct)
+
+            self.scaler = StandardScaler()
+            self.scaler.fit(mlp_features)
 
             stream = np.array(df['stream'])
             cwola_label = np.array(df['CWoLa_Label'], dtype=bool)
-
             sampled_data = (stream == 2)
             stream[sampled_data] = 0
 
-            embeddings = np.column_stack((ra, dec, pm_ra, pm_dec, gmag, color, rmag0, g_r, r_z))
-            print(f'Total nan values in embeddings: {np.sum(np.isnan(embeddings))}')
-
-            train_mask, val_mask, test_mask = get_mask_splits(embeddings, self.train_pct)
-
-            self.scaler = StandardScaler()
-            self.scaler.fit(embeddings)
-
-            print(f'Percent Wiggle is {self.p_wiggle}')
-
-            ra_err = np.std(ra) * self.p_wiggle * np.ones_like(ra) * .25
-            dec_err = np.std(dec) * self.p_wiggle * np.ones_like(ra) * .25
-            gmag_err = np.std(gmag) * self.p_wiggle * np.ones_like(ra)
-            color_err = np.std(color) * self.p_wiggle * np.ones_like(ra)
-            rmag0_err = np.std(rmag0) * self.p_wiggle * np.ones_like(ra)
-            g_r_err = np.std(g_r) * self.p_wiggle * np.ones_like(ra)
-            r_z_err = np.std(r_z) * self.p_wiggle * np.ones_like(ra)
-
-            errors = np.column_stack((ra_err, dec_err, pm_ra_error, pm_dec_error, gmag_err, color_err, rmag0_err, g_r_err, r_z_err))
-
-            feature_scales = self.scaler.scale_
-            safe_scale = np.where(feature_scales == 0.0, 1.0, feature_scales)
-            errors_scaled = errors / safe_scale
-
             labels = np.column_stack((cwola_label, stream))
             id_plus_sample = sampled_data.astype(bool)
-            print(errors_scaled[0])
 
             train_dataset = EM_CATHODEGaiaDatasetLinear(
-                torch.tensor(self.scaler.transform(embeddings[train_mask]), dtype=torch.float32),
+                torch.tensor(raw_features[train_mask], dtype=torch.float32),
                 torch.tensor(labels[train_mask], dtype=torch.float32),
-                torch.tensor(errors_scaled[train_mask], dtype=torch.float32),
+                torch.tensor(errors[train_mask], dtype=torch.float32),
                 torch.tensor(id_plus_sample[train_mask], dtype=torch.float32))
 
             test_dataset = EM_CATHODEGaiaDatasetLinear(
-                torch.tensor(self.scaler.transform(embeddings[test_mask]), dtype=torch.float32),
+                torch.tensor(raw_features[test_mask], dtype=torch.float32),
                 torch.tensor(labels[test_mask], dtype=torch.float32),
-                torch.tensor(errors_scaled[test_mask], dtype=torch.float32),
+                torch.tensor(errors[test_mask], dtype=torch.float32),
                 torch.tensor(id_plus_sample[test_mask], dtype=torch.float32))
 
             val_dataset = EM_CATHODEGaiaDatasetLinear(
-                torch.tensor(self.scaler.transform(embeddings[val_mask]), dtype=torch.float32),
+                torch.tensor(raw_features[val_mask], dtype=torch.float32),
                 torch.tensor(labels[val_mask], dtype=torch.float32),
-                torch.tensor(errors_scaled[val_mask], dtype=torch.float32),
+                torch.tensor(errors[val_mask], dtype=torch.float32),
                 torch.tensor(id_plus_sample[val_mask], dtype=torch.float32))
 
             self.train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=8)
