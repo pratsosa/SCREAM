@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Union
+
 import torch.nn as nn
 
 
@@ -38,20 +42,30 @@ class LinearModel(nn.Module):
         self,
         input_dim,
         num_layers: int = 3,
-        hidden_units: int = 256,
+        hidden_units: Union[int, list[int]] = 256,
         dropout: float = 0.0,
         layer_norm: bool = False,
         activation: str = "relu",
         residual: bool = False,
     ):
         """
+        hidden_units can be an int (uniform hidden size, num_layers controls depth)
+        or a list of ints (one entry per hidden layer; num_layers is ignored).
+
         If residual=True:
             - Uses Pre-LN ResidualBlocks for all hidden layers
+            - All hidden dims must be equal (ResidualBlock requires fixed dim)
             - LayerNorm is applied inside blocks, independent of layer_norm flag
         """
         super().__init__()
-        assert num_layers >= 1
         assert 0.0 <= dropout < 1.0
+
+        # Resolve hidden layer widths
+        if isinstance(hidden_units, list):
+            hidden_dims = hidden_units
+        else:
+            assert num_layers >= 1
+            hidden_dims = [hidden_units] * (num_layers - 1)
 
         self.residual = residual
 
@@ -59,21 +73,27 @@ class LinearModel(nn.Module):
         in_dim = input_dim
 
         if residual:
-            layers.append(nn.Linear(in_dim, hidden_units))
-            for _ in range(num_layers - 1):
-                layers.append(ResidualBlock(hidden_units, activation=activation))
-            layers.append(nn.Linear(hidden_units, 1))
+            if len(set(hidden_dims)) > 1:
+                raise ValueError(
+                    "residual=True requires all hidden dims to be equal; "
+                    f"got {hidden_dims}"
+                )
+            h = hidden_dims[0] if hidden_dims else input_dim
+            layers.append(nn.Linear(in_dim, h))
+            for _ in range(len(hidden_dims) - 1):
+                layers.append(ResidualBlock(h, activation=activation))
+            layers.append(nn.Linear(h, 1))
             self.net = nn.Sequential(*layers)
             return
 
-        for _ in range(num_layers - 1):
-            layers.append(nn.Linear(in_dim, hidden_units))
+        for h in hidden_dims:
+            layers.append(nn.Linear(in_dim, h))
             if layer_norm:
-                layers.append(nn.LayerNorm(hidden_units))
+                layers.append(nn.LayerNorm(h))
             layers.append(get_activation(activation))
             if dropout > 0.0:
                 layers.append(nn.Dropout(dropout))
-            in_dim = hidden_units
+            in_dim = h
 
         layers.append(nn.Linear(in_dim, 1))
         self.net = nn.Sequential(*layers)

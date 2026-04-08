@@ -7,7 +7,7 @@ from scream.models.mlp import LinearModel
 
 
 class LitLinearModel(L.LightningModule):
-    def __init__(self, lr, input_dim, EPOCHS, steps_per_epoch, pos_weight, num_layers=3, hidden_units=256, dropout=0.0):
+    def __init__(self, lr, input_dim, EPOCHS, steps_per_epoch, pos_weight, num_layers=3, hidden_units=256, dropout=0.0):  # hidden_units: int or list[int]
         super().__init__()
         self.model = LinearModel(input_dim, num_layers=num_layers, hidden_units=hidden_units, dropout=dropout)
         self.criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)

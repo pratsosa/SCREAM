@@ -19,7 +19,7 @@ class EM_LitLinearModel(L.LightningModule):
     def __init__(self, lr, input_dim, EPOCHS, steps_per_epoch, pos_weight,
                  scaler_mean: np.ndarray, scaler_scale: np.ndarray,
                  n_extinction_iter: int = 10,
-                 num_layers=3, hidden_units=256, dropout=0.0, num_mc_samples=10,
+                 num_layers=3, hidden_units=256, dropout=0.0, num_mc_samples=10,  # hidden_units: int or list[int]
                  pct_start=0.3, weight_decay=0.0, layer_norm=False,
                  activation='relu', residual=False):
         super().__init__()

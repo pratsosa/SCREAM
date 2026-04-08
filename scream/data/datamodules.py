@@ -114,7 +114,7 @@ def _gaia_extinction_numpy(G, Bp, Rp, ebv, n_iter=10):
     Returns (A_G, A_Bp, A_Rp) in magnitudes.
     """
     A0 = 3.1 * ebv
-    curbp = Bp - Rp
+    curbp = np.clip(Bp - Rp, -2.0, 5.0)
     for _ in range(n_iter):
         AG  = (0.9761 + (-0.1704)*curbp + 0.0086*curbp**2 + 0.0011*curbp**3
                + (-0.0438)*A0 + 0.0013*A0**2 + 0.0099*curbp*A0) * A0
@@ -122,7 +122,7 @@ def _gaia_extinction_numpy(G, Bp, Rp, ebv, n_iter=10):
                + (-0.0230)*A0 + 0.0006*A0**2 + 0.0043*curbp*A0) * A0
         ARp = (0.6104 + (-0.0170)*curbp + (-0.0026)*curbp**2 + (-0.0017)*curbp**3
                + (-0.0078)*A0 + 0.00005*A0**2 + 0.0006*curbp*A0) * A0
-        curbp = (Bp - Rp) - ABp + ARp
+        curbp = np.clip((Bp - Rp) - ABp + ARp, -2.0, 5.0)
     return AG, ABp, ARp
 
 
@@ -219,7 +219,7 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
             train_mask, val_mask, test_mask = get_mask_splits(raw_features, self.train_pct)
 
             self.scaler = StandardScaler()
-            self.scaler.fit(mlp_features)
+            self.scaler.fit(mlp_features[train_mask])
 
             stream = np.array(df['stream'])
             cwola_label = np.array(df['CWoLa_Label'], dtype=bool)

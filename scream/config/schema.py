@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 
 @dataclass
@@ -22,7 +22,7 @@ class StreamConfig:
 @dataclass
 class TrainConfig:
     lr: float = 1e-3
-    hidden_units: int = 64
+    hidden_units: Union[int, List[int]] = 64
     num_layers: int = 4
     num_mc_samples: int = 10
     dropout: float = 0.0
