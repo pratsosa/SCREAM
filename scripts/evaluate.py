@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -96,6 +98,88 @@ def _run_inference(loader, model, device):
     true_labels = np.concatenate(all_true)
     is_real = np.concatenate(all_real)
     return probs, true_labels, is_real
+
+
+def plot_threshold_table(probs_val, true_val, threshold, output_path):
+    """Render a table of Recall / Precision / F1 for thresholds near *threshold*.
+
+    Covers up to 10 steps of 0.01 above (capped at 1.00) and below (capped at
+    0.80).  The selected threshold row is highlighted in amber.
+    """
+    steps_below = min(10, int(round((threshold - 0.80) / 0.01)))
+    steps_above = min(10, int(round((1.00 - threshold) / 0.01)))
+    thresholds = [
+        round(threshold + i * 0.01, 2)
+        for i in range(-steps_below, steps_above + 1)
+    ]
+
+    rows = []
+    for t in thresholds:
+        preds = (probs_val >= t).astype(int)
+        rec  = recall_score(true_val, preds, zero_division=0)
+        prec = precision_score(true_val, preds, zero_division=0)
+        f1   = f1_score(true_val, preds, zero_division=0)
+        rows.append([f"{t:.2f}", f"{rec:.4f}", f"{prec:.4f}", f"{f1:.4f}"])
+
+    col_labels = ["Threshold", "Recall", "Precision", "F1"]
+    n_rows = len(rows)
+    highlight_idx = steps_below  # position of the selected threshold in the list
+
+    HEADER_BG   = "#2c3e50"   # dark navy
+    HIGHLIGHT   = "#f39c12"   # amber
+    ROW_EVEN    = "#f4f6f7"   # very light grey
+    ROW_ODD     = "#ffffff"   # white
+
+    cell_colors = []
+    for i in range(n_rows):
+        if i == highlight_idx:
+            cell_colors.append([HIGHLIGHT] * len(col_labels))
+        else:
+            cell_colors.append([ROW_EVEN if i % 2 == 0 else ROW_ODD] * len(col_labels))
+
+    fig_height = max(3.5, 0.45 * n_rows + 2.0)
+    fig, ax = plt.subplots(figsize=(8, fig_height))
+    ax.axis("off")
+
+    table = ax.table(
+        cellText=rows,
+        colLabels=col_labels,
+        cellLoc="center",
+        loc="center",
+        cellColours=cell_colors,
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(13)
+    table.scale(1.2, 2.0)
+
+    # Style the header row
+    for j in range(len(col_labels)):
+        cell = table[0, j]
+        cell.set_facecolor(HEADER_BG)
+        cell.set_text_props(color="white", fontweight="bold", fontsize=13)
+
+    # Bold text for the highlighted (selected) threshold row
+    for j in range(len(col_labels)):
+        table[highlight_idx + 1, j].set_text_props(fontweight="bold", fontsize=13)
+
+    ax.set_title(
+        f"Val-set metrics by threshold  (selected: {threshold:.2f})",
+        fontsize=14, fontweight="bold", pad=16,
+    )
+
+    legend_patch = mpatches.Patch(color=HIGHLIGHT, label=f"Selected threshold ({threshold:.2f})")
+    ax.legend(
+        handles=[legend_patch],
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.03),
+        fontsize=11,
+        frameon=False,
+    )
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Threshold table written to {output_path}")
 
 
 def main():
@@ -202,6 +286,12 @@ def main():
     print(f"Recall    : {rec:.4f}")
     print(f"Precision : {prec:.4f}")
     print(f"F1        : {f1:.4f}")
+
+    # --- Threshold sensitivity table (val set) ---
+    plot_threshold_table(
+        probs_val, true_val, threshold,
+        output_dir / "threshold_table.png",
+    )
 
     # --- Write eval_config.yaml before any plotting ---
     eval_config = {
