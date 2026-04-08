@@ -12,6 +12,7 @@ import os
 import shutil
 
 import joblib
+import numpy as np
 import yaml
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -52,11 +53,13 @@ def main():
         stream=stream_cfg.name.upper(),
         load_data_dir=stream_cfg.generated_data_path,
         batch_size=train_cfg.batch_size,
-        p_wiggle=train_cfg.p_wiggle,
         subsample_generated_seed=12345,
     )
     data_module.setup("fit")
     steps_per_epoch = len(data_module.train_dataloader())
+
+    scaler_mean  = data_module.scaler.mean_.astype(np.float32)
+    scaler_scale = data_module.scaler.scale_.astype(np.float32)
 
     # Persist fitted scaler for use in evaluate.py
     loaders_dir = get_scratch_dir(stream_cfg.name) / "loaders"
@@ -79,7 +82,9 @@ def main():
         layer_norm=train_cfg.use_layer_norm,
         activation=train_cfg.activation,
         residual=train_cfg.use_residual,
-        anneal_noise=False,
+        scaler_mean=scaler_mean,
+        scaler_scale=scaler_scale,
+        n_extinction_iter=stream_cfg.n_extinction_iter,
     )
 
     # Callbacks

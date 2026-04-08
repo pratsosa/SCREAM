@@ -16,6 +16,7 @@ class StreamConfig:
     # boolean column in the raw FITS file. Set to [low, high] to derive it
     # dynamically from pm_ra values (useful when no pre-computed column exists).
     pm_ra_signal_range: Optional[Tuple[float, float]] = None
+    n_extinction_iter: int = 10   # Babusiaux Gaia extinction convergence iterations
 
 
 @dataclass
@@ -29,13 +30,10 @@ class TrainConfig:
     use_residual: bool = False
     activation: str = "relu"
     pct_start: float = 0.3
-    # Placeholder — noise annealing will be removed in a later pass when full
-    # covariance matrix inputs are implemented.
     noise_annealing: str = "constant"
     max_epochs: int = 100
     batch_size: int = 512
     weight_decay: float = 1e-4
-    p_wiggle: float = 0.0
     early_stopping_patience: int = 35
     seed: int = 42
     wandb_project: str = "SCREAM"

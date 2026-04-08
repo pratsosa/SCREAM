@@ -17,10 +17,10 @@ weight_decay: 0.0
 num_mc_samples: 10
 
 # Data augmentation
-p_wiggle: 0.5           # Fractional std applied as photometric feature errors
+# p_wiggle: 0.5           # Fractional std applied as photometric feature errors
 
 # Noise annealing (placeholder — will be removed when full covariance inputs land)
-noise_annealing: constant
+# noise_annealing: constant
 
 # Early stopping
 early_stopping_patience: 35
