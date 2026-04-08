@@ -45,7 +45,7 @@ def plot_phi1_phi2_preds(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with matplotlib.rc_context(_RC):
-        fig, ax = plt.subplots(figsize=(10, 8))
+        fig, ax = plt.subplots(figsize=(10, 6))
 
         ax.hist2d(
             phi1[~true_mask],

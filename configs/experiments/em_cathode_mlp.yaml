@@ -14,7 +14,7 @@ pct_start: 0.1          # Fraction of training spent warming up the LR (OneCycle
 max_epochs: 100
 batch_size: 25000
 weight_decay: 0.0
-num_mc_samples: 10
+num_mc_samples: 1
 
 # Data augmentation
 # p_wiggle: 0.5           # Fractional std applied as photometric feature errors

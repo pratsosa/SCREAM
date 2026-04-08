@@ -23,9 +23,9 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
-from torch import nn
 
 from scream.config.schema import StreamConfig
+from scream.data.datamodules import _gaia_extinction_numpy
 from scream.models.lit_em_mlp import EM_LitLinearModel
 from scream.plotting import (
     plot_cmd_decals_gr,
@@ -36,23 +36,6 @@ from scream.plotting import (
     plot_phi1_pm_tracks,
 )
 from scream.utils.hpc import get_scratch_dir
-
-# ---------------------------------------------------------------------------
-# Error-column indices for MC perturbation during inference
-# ---------------------------------------------------------------------------
-# The errors tensor in the dataloader has 9 columns in the same order as
-# stream_cfg.features: [ra, dec, pm_ra, pm_dec, gmag, color, rmag0, g_r, r_z].
-# Only pm_ra (index 2) and pm_dec (index 3) carry real Gaia measurement errors;
-# all other columns are wiggle-augmented synthetic values that should not be
-# perturbed during inference.
-#
-# TODO: derive these dynamically by stripping the '_error' suffix from each entry
-# in stream_cfg.error_features and looking up the result in stream_cfg.features.
-# Hard-coded for now because the GD-1 feature list is fixed (pm_ra is always
-# index 2, pm_dec always index 3).
-_PM_ERROR_COLS = [2, 3]
-
-_N_MC_INFERENCE = 100
 
 
 def parse_args():
@@ -81,41 +64,33 @@ def parse_args():
 def _run_inference(loader, model, device):
     """Return (probs, true_labels, is_real_star) arrays over the full loader.
 
-    is_real_star is True for rows where sampled_data == 0 (real Gaia stars,
+    is_real_star is True for rows where id_plus_sample == 0 (real Gaia stars,
     not flow-generated background).
+
+    Inference goes through model.shared_step, which applies the same flux-space
+    MC perturbation and extinction correction as training.
     """
     all_probs = []
     all_true = []
     all_real = []
 
-    sig = nn.Sigmoid()
     model.eval()
+    model.to(device)
     model.to(torch.float32)
 
     with torch.inference_mode():
-        for x, y, errs_in, sampled_data in loader:
-            B, D = x.shape
-
-            # Build errors tensor: zeros everywhere except pm_ra / pm_dec columns.
-            # See _PM_ERROR_COLS comment at module top for why indices 2 and 3.
-            errors = torch.zeros_like(x)
-            for col in _PM_ERROR_COLS:
-                errors[:, col] = errs_in[:, col]
-
-            x_samples = (
-                x.unsqueeze(1)
-                + torch.randn(B, _N_MC_INFERENCE, D).to(x.device) * errors.unsqueeze(1)
+        for x_raw, y, errors, id_plus_sample in loader:
+            batch_on_device = (
+                x_raw.to(device),
+                y.to(device),
+                errors.to(device),
+                id_plus_sample.to(device),
             )
-            logits = model.model.to(device)(x_samples.to(device)).squeeze(-1)
-            # logits shape: (B, N_MC) — average over MC samples in probability space
-            probs_batch = sig(logits).mean(dim=1).cpu().numpy()
+            _, p_marginal, _, y_true = model.shared_step(batch_on_device, stage='eval')
 
-            true_batch = y[:, 1].numpy()  # column 1 = true SF label
-            real_batch = ~sampled_data.numpy().astype(bool)  # True = real star
-
-            all_probs.append(probs_batch)
-            all_true.append(true_batch)
-            all_real.append(real_batch)
+            all_probs.append(p_marginal.numpy())
+            all_true.append(y_true.numpy())
+            all_real.append(~id_plus_sample.numpy().astype(bool))
 
     probs = np.concatenate(all_probs)
     true_labels = np.concatenate(all_true)
@@ -150,7 +125,11 @@ def main():
     test_loader = torch.load(test_loader_path, weights_only=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = EM_LitLinearModel.load_from_checkpoint(str(ckpt_path))
+    model = EM_LitLinearModel.load_from_checkpoint(
+        str(ckpt_path),
+        scaler_mean=scaler.mean_.astype(np.float32),
+        scaler_scale=scaler.scale_.astype(np.float32),
+    )
     model.eval()
 
     # --- Val inference ---
@@ -175,20 +154,44 @@ def main():
     # --- Test inference ---
     probs_test_full, true_test_full, real_test = _run_inference(test_loader, model, device)
 
-    # Collect raw scaled features and real-star mask from test loader
-    scaled_data_list = []
-    for x, y, errs_in, sampled_data in test_loader:
-        scaled_data_list.append(x.numpy())
-    scaled_data_full = np.concatenate(scaled_data_list, axis=0)
+    # Collect raw features and errors from test loader for plotting
+    raw_data_list = []
+    errors_list = []
+    for x_raw, y, errors, id_plus_sample in test_loader:
+        raw_data_list.append(x_raw.numpy())
+        errors_list.append(errors.numpy())
+    raw_data_full   = np.concatenate(raw_data_list,  axis=0)
+    errors_full     = np.concatenate(errors_list,    axis=0)
 
     # Filter to real stars only
     probs_test = probs_test_full[real_test]
-    true_test = true_test_full[real_test]
-    scaled_data = scaled_data_full[real_test]
+    true_test  = true_test_full[real_test]
+    raw_data   = raw_data_full[real_test]
+    errors_arr = errors_full[real_test]
 
-    # Inverse-transform features; column names from YAML feature order
-    features_orig = scaler.inverse_transform(scaled_data)
-    feature_names = stream_cfg.features  # e.g. [ra, dec, pm_ra, pm_dec, gmag, color, rmag0, g_r, r_z]
+    # Compute extinction-corrected MLP features for visualisation
+    # raw_data cols: phi1, phi2, pm_phi1, pm_phi2, G_mag, Bp_mag, Rp_mag, g_mag, r_mag, z_mag
+    # errors_arr col 10: ebv
+    phi1_raw = raw_data[:, 0];  phi2_raw = raw_data[:, 1]
+    pm_phi1  = raw_data[:, 2];  pm_phi2  = raw_data[:, 3]
+    G_mag    = raw_data[:, 4];  Bp_mag   = raw_data[:, 5];  Rp_mag = raw_data[:, 6]
+    g_mag    = raw_data[:, 7];  r_mag    = raw_data[:, 8];  z_mag  = raw_data[:, 9]
+    ebv      = errors_arr[:, 10]
+
+    AG, ABp, ARp = _gaia_extinction_numpy(G_mag, Bp_mag, Rp_mag, ebv)
+    G0    = G_mag  - AG
+    Bp0   = Bp_mag - ABp
+    Rp0   = Rp_mag - ARp
+    g0    = g_mag  - 3.214 * ebv
+    r0    = r_mag  - 2.165 * ebv
+    z0    = z_mag  - 1.211 * ebv
+    BpRp0 = Bp0 - Rp0
+    gr0   = g0  - r0
+    rz0   = r0  - z0
+
+    features_orig = np.column_stack([phi1_raw, phi2_raw, pm_phi1, pm_phi2,
+                                      G0, BpRp0, r0, gr0, rz0])
+    feature_names = stream_cfg.features  # phi1, phi2, pm_phi1, pm_phi2, G0, Bp0_Rp0, rmag0, g0_r0, r0_z0
 
     # --- Metrics ---
     preds_test = (probs_test >= threshold).astype(int)
@@ -207,7 +210,7 @@ def main():
         "checkpoint": str(ckpt_path.resolve()),
         "threshold": threshold,
         "threshold_source": threshold_source,
-        "n_mc_samples_inference": _N_MC_INFERENCE,
+        "n_mc_samples_inference": model.num_mc_samples,
         "val_set_size": int(real_val.sum()),
         "test_set_size": int(real_test.sum()),
         "metrics": {
@@ -231,15 +234,15 @@ def main():
     def _col(name):
         return features_orig[:, feature_names.index(name)]
 
-    phi1 = _col("ra")
-    phi2 = _col("dec")
-    pm_mu1 = _col("pm_ra")
-    pm_mu2 = _col("pm_dec")
-    gmag = _col("gmag")
-    color = _col("color")
-    rmag0 = _col("rmag0")
-    g_r = _col("g_r")
-    r_z = _col("r_z")
+    phi1   = _col("phi1")
+    phi2   = _col("phi2")
+    pm_mu1 = _col("pm_phi1")
+    pm_mu2 = _col("pm_phi2")
+    gmag   = _col("G0")
+    color  = _col("Bp0_Rp0")
+    rmag0  = _col("rmag0")
+    g_r    = _col("g0_r0")
+    r_z    = _col("r0_z0")
 
     true_mask = true_test.astype(bool)
     preds_bool = preds_test.astype(bool)
