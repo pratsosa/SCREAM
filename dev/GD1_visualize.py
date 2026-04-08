@@ -37,7 +37,8 @@ _STREAM_KW = dict(s=30, c="tab:red", edgecolors="k", linewidths=0.3, alpha=0.9, 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-INPUT_FITS = "/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_full.fits"
+# INPUT_FITS = "/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_full.fits"
+INPUT_FITS = "/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_040726.fits"
 OUTPUT_DIR = Path("/pscratch/sd/p/pratsosa/GD-1_plots")
 
 # ---------------------------------------------------------------------------
