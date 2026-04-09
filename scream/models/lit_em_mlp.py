@@ -48,7 +48,7 @@ class EM_LitLinearModel(L.LightningModule):
         self.steps_per_epoch = steps_per_epoch
 
     def shared_step(self, batch, stage: str):
-        x_raw, y, errors, _ = batch
+        x_raw, y, errors, id_plus_sample, *_ = batch
         # x_raw shape: (B, 10)  — phi1, phi2, pm_phi1, pm_phi2, G_mag, Bp_mag, Rp_mag, g_mag, r_mag, z_mag
         # errors shape: (B, 11) — phot_g_flux_err, phot_bp_flux_err, phot_rp_flux_err,
         #                          flux_err_g, flux_err_r, flux_err_z,

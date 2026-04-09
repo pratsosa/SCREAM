@@ -1,7 +1,7 @@
 # EM-CATHODE MLP — hyperparameters extracted from GD1_EM_CATHODE_MLP.ipynb
 
 # Model architecture
-hidden_units: 384
+hidden_units: [512, 256, 256, 64]
 num_layers: 4
 activation: relu
 use_layer_norm: false

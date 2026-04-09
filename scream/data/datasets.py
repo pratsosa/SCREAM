@@ -29,14 +29,15 @@ class CATHODEGaiaDatasetLinear(Dataset):
 
 
 class EM_CATHODEGaiaDatasetLinear(Dataset):
-    def __init__(self, data, labels, errors, id_plus_sample):
+    def __init__(self, data, labels, errors, id_plus_sample, source_id):
         self.data = data
         self.labels = labels
         self.errors = errors
         self.id_plus_sample = id_plus_sample
+        self.source_id = source_id
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx], self.errors[idx], self.id_plus_sample[idx]
+        return self.data[idx], self.labels[idx], self.errors[idx], self.id_plus_sample[idx], self.source_id[idx]

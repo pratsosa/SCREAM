@@ -64,7 +64,7 @@ def parse_args():
 
 
 def _run_inference(loader, model, device):
-    """Return (probs, true_labels, is_real_star) arrays over the full loader.
+    """Return (probs, true_labels, is_real_star, source_ids) arrays over the full loader.
 
     is_real_star is True for rows where id_plus_sample == 0 (real Gaia stars,
     not flow-generated background).
@@ -75,29 +75,33 @@ def _run_inference(loader, model, device):
     all_probs = []
     all_true = []
     all_real = []
+    all_source_ids = []
 
     model.eval()
     model.to(device)
     model.to(torch.float32)
 
     with torch.inference_mode():
-        for x_raw, y, errors, id_plus_sample in loader:
+        for x_raw, y, errors, id_plus_sample, source_id in loader:
             batch_on_device = (
                 x_raw.to(device),
                 y.to(device),
                 errors.to(device),
                 id_plus_sample.to(device),
+                source_id.to(device),
             )
             _, p_marginal, _, y_true = model.shared_step(batch_on_device, stage='eval')
 
             all_probs.append(p_marginal.numpy())
             all_true.append(y_true.numpy())
             all_real.append(~id_plus_sample.numpy().astype(bool))
+            all_source_ids.append(source_id.numpy())
 
     probs = np.concatenate(all_probs)
     true_labels = np.concatenate(all_true)
     is_real = np.concatenate(all_real)
-    return probs, true_labels, is_real
+    source_ids = np.concatenate(all_source_ids)
+    return probs, true_labels, is_real, source_ids
 
 
 def plot_threshold_table(probs_val, true_val, threshold, output_path):
@@ -106,7 +110,12 @@ def plot_threshold_table(probs_val, true_val, threshold, output_path):
     Covers up to 10 steps of 0.01 above (capped at 1.00) and below (capped at
     0.80).  The selected threshold row is highlighted in amber.
     """
-    steps_below = min(10, int(round((threshold - 0.80) / 0.01)))
+    # If threshold is below 0.80 the lower-bound cap doesn't apply — show only
+    # thresholds at or above the selected value.
+    if threshold < 0.80:
+        steps_below = 0
+    else:
+        steps_below = min(10, int(round((threshold - 0.80) / 0.01)))
     steps_above = min(10, int(round((1.00 - threshold) / 0.01)))
     thresholds = [
         round(threshold + i * 0.01, 2)
@@ -217,7 +226,7 @@ def main():
     model.eval()
 
     # --- Val inference ---
-    probs_val_full, true_val_full, real_val = _run_inference(val_loader, model, device)
+    probs_val_full, true_val_full, real_val, _ = _run_inference(val_loader, model, device)
     probs_val = probs_val_full[real_val]
     true_val = true_val_full[real_val]
 
@@ -236,22 +245,23 @@ def main():
     print(f"Threshold ({threshold_source}): {threshold:.4f}")
 
     # --- Test inference ---
-    probs_test_full, true_test_full, real_test = _run_inference(test_loader, model, device)
+    probs_test_full, true_test_full, real_test, source_ids_full = _run_inference(test_loader, model, device)
 
     # Collect raw features and errors from test loader for plotting
     raw_data_list = []
     errors_list = []
-    for x_raw, y, errors, id_plus_sample in test_loader:
+    for x_raw, y, errors, id_plus_sample, source_id in test_loader:
         raw_data_list.append(x_raw.numpy())
         errors_list.append(errors.numpy())
     raw_data_full   = np.concatenate(raw_data_list,  axis=0)
     errors_full     = np.concatenate(errors_list,    axis=0)
 
     # Filter to real stars only
-    probs_test = probs_test_full[real_test]
-    true_test  = true_test_full[real_test]
-    raw_data   = raw_data_full[real_test]
-    errors_arr = errors_full[real_test]
+    probs_test   = probs_test_full[real_test]
+    true_test    = true_test_full[real_test]
+    raw_data     = raw_data_full[real_test]
+    errors_arr   = errors_full[real_test]
+    source_ids   = source_ids_full[real_test]
 
     # Compute extinction-corrected MLP features for visualisation
     # raw_data cols: phi1, phi2, pm_phi1, pm_phi2, G_mag, Bp_mag, Rp_mag, g_mag, r_mag, z_mag
@@ -315,6 +325,7 @@ def main():
 
     # --- Write predictions CSV ---
     pred_df = pd.DataFrame(features_orig, columns=feature_names)
+    pred_df["source_id"] = source_ids
     pred_df["model_prob"] = probs_test
     pred_df["true_label"] = true_test.astype(int)
     pred_df.to_csv(results_dir / f"{run_name}_predictions.csv", index=False)

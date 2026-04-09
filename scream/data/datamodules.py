@@ -14,7 +14,7 @@ from scream.data.datasets import (
     CATHODEGaiaDatasetLinear,
     EM_CATHODEGaiaDatasetLinear,
 )
-from scream.data.transforms import get_mask_splits
+from scream.data.transforms import get_mask_splits, get_kfold_masks
 from scream.utils.hpc import get_scratch_dir
 
 
@@ -130,7 +130,8 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
     def __init__(self, name, stream, load_data_dir=None,
                  batch_size=1024, train_pct=.8,
                  load_dataloaders=False,
-                 subsample_generated_seed=None):
+                 subsample_generated_seed=None,
+                 n_folds=None, fold_idx=None):
 
         super().__init__()
         seed_everything(12345)
@@ -141,6 +142,8 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
         self.name = name
         self.stream = stream
         self.subsample_generated_seed = subsample_generated_seed
+        self.n_folds = n_folds
+        self.fold_idx = fold_idx
 
     def setup(self, stage: str):
         if not self.load_dataloaders:
@@ -216,7 +219,12 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
                                              G0, BpRp0, r0, gr0, rz0])
             print(f'Total nan values in mlp_features: {np.sum(np.isnan(mlp_features))}')
 
-            train_mask, val_mask, test_mask = get_mask_splits(raw_features, self.train_pct)
+            if self.n_folds is not None:
+                train_mask, val_mask, test_mask = get_kfold_masks(
+                    len(raw_features), self.n_folds, self.fold_idx, seed=12345
+                )
+            else:
+                train_mask, val_mask, test_mask = get_mask_splits(raw_features, self.train_pct)
 
             self.scaler = StandardScaler()
             self.scaler.fit(mlp_features[train_mask])
@@ -228,24 +236,28 @@ class EM_CATHODELinearDataModule(L.LightningDataModule):
 
             labels = np.column_stack((cwola_label, stream))
             id_plus_sample = sampled_data.astype(bool)
+            source_id = np.array(df['source_id'])
 
             train_dataset = EM_CATHODEGaiaDatasetLinear(
                 torch.tensor(raw_features[train_mask], dtype=torch.float32),
                 torch.tensor(labels[train_mask], dtype=torch.float32),
                 torch.tensor(errors[train_mask], dtype=torch.float32),
-                torch.tensor(id_plus_sample[train_mask], dtype=torch.float32))
+                torch.tensor(id_plus_sample[train_mask], dtype=torch.float32),
+                torch.tensor(source_id[train_mask], dtype=torch.int64))
 
             test_dataset = EM_CATHODEGaiaDatasetLinear(
                 torch.tensor(raw_features[test_mask], dtype=torch.float32),
                 torch.tensor(labels[test_mask], dtype=torch.float32),
                 torch.tensor(errors[test_mask], dtype=torch.float32),
-                torch.tensor(id_plus_sample[test_mask], dtype=torch.float32))
+                torch.tensor(id_plus_sample[test_mask], dtype=torch.float32),
+                torch.tensor(source_id[test_mask], dtype=torch.int64))
 
             val_dataset = EM_CATHODEGaiaDatasetLinear(
                 torch.tensor(raw_features[val_mask], dtype=torch.float32),
                 torch.tensor(labels[val_mask], dtype=torch.float32),
                 torch.tensor(errors[val_mask], dtype=torch.float32),
-                torch.tensor(id_plus_sample[val_mask], dtype=torch.float32))
+                torch.tensor(id_plus_sample[val_mask], dtype=torch.float32),
+                torch.tensor(source_id[val_mask], dtype=torch.int64))
 
             self.train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=8)
             self.test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
