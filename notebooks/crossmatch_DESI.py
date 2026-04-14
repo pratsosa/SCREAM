@@ -34,11 +34,14 @@ preds = Table.from_pandas(preds)
 cat = table.join(cat, preds, keys='source_id')
 
 # %% [markdown]
-# ## Step 2 — DESI VRAD
-# Loads mwsall-pix-iron.fits RVTAB + GAIA extensions, deduplicates by
-# lowest VRAD_ERR per source, then left-joins onto cat on source_id.
+# ## Step 2 — DESI VRAD + stream/background labels
+# Loads mwsall-pix-iron.fits (RVTAB + GAIA extensions), deduplicates by
+# lowest VRAD_ERR per source, then merges with Emma's GD1_DESI_memprob.fits.
+# Emma's entries take priority for both VRAD and stream membership labels.
+# The combined catalog is left-joined onto cat on source_id.
 
 # %%
+# --- 2a: mwsall VRAD ---
 DR1_DESI_rvtab = Table.read(
     f'{DESI_DATA_PATH}/mwsall-pix-iron.fits', hdu='RVTAB', mask_invalid=False)
 DR1_DESI_gaia  = Table.read(
@@ -56,27 +59,58 @@ desi_df = desi_df[desi_df['source_id'] != 0]
 desi_df['source_id'] = desi_df['source_id'].astype(np.int64)
 desi_df = desi_df.sort_values('VRAD_ERR', ascending=True)
 desi_df = desi_df.drop_duplicates(subset=['source_id'], keep='first')
-DR1_DESI_cat = Table.from_pandas(desi_df)
-print(f'{len(DR1_DESI_cat)} unique Gaia sources with valid DESI VRAD measurements')
+print(f'{len(desi_df)} unique Gaia sources with valid DESI VRAD measurements')
 
-cat = table.join(cat, DR1_DESI_cat, keys='source_id', join_type='left')
+# --- 2b: Emma's catalog ---
+emma = Table.read(f'{DESI_DATA_PATH}/GD1_DESI_memprob.fits')
+emma = emma[['SOURCE_ID', 'VRAD', 'VRAD_ERR', 'p_stream', 'p_cocoon']]
+emma.rename_column('SOURCE_ID', 'source_id')
+emma_df = emma.to_pandas()
+emma_df['source_id'] = emma_df['source_id'].astype(np.int64)
+# Deduplicate Emma's catalog by best VRAD_ERR, just in case.
+emma_df = emma_df.sort_values('VRAD_ERR', ascending=True)
+emma_df = emma_df.drop_duplicates(subset=['source_id'], keep='first')
+emma_df['desi_label'] = (emma_df['p_stream'] + emma_df['p_cocoon'] >= 0.5).astype(int)
+print(f'{len(emma_df)} sources in Emma\'s GD1_DESI_memprob catalog')
+print(f'{emma_df["desi_label"].sum()} stream members (p_stream + p_cocoon >= 0.5)')
+
+# --- 2c: Combine — Emma first, mwsall fills in the rest ---
+# mwsall entries not in Emma are labelled background (0); p_stream/p_cocoon are NaN.
+mwsall_only_df = desi_df[~desi_df['source_id'].isin(emma_df['source_id'])].copy()
+mwsall_only_df['p_stream']   = np.nan
+mwsall_only_df['p_cocoon']   = np.nan
+mwsall_only_df['desi_label'] = 0
+
+combined_df = pd.concat([emma_df, mwsall_only_df], ignore_index=True)
+desi_combined = Table.from_pandas(combined_df)
+print(f'{len(desi_combined)} total sources in combined DESI catalog')
+
+# --- 2d: Left-join onto cat ---
+cat = table.join(cat, desi_combined, keys='source_id', join_type='left')
 cat.rename_column('VRAD',     'DESI_VRAD')
 cat.rename_column('VRAD_ERR', 'DESI_VRAD_ERR')
 
-# Convert masked columns to plain float arrays (NaN for unmatched rows).
-desi_vrad = np.where(
-    np.ma.getmaskarray(cat['DESI_VRAD']),
-    np.nan,
-    np.ma.getdata(cat['DESI_VRAD']).astype(float))
-desi_vrad_err = np.where(
-    np.ma.getmaskarray(cat['DESI_VRAD_ERR']),
-    np.nan,
-    np.ma.getdata(cat['DESI_VRAD_ERR']).astype(float))
-cat['DESI_VRAD']     = desi_vrad
-cat['DESI_VRAD_ERR'] = desi_vrad_err
+# --- 2e: Unmask columns (masked = star not observed by DESI at all) ---
+def _unmask_float(col):
+    return np.where(np.ma.getmaskarray(col), np.nan, np.ma.getdata(col).astype(float))
 
-n_matched = np.isfinite(desi_vrad).sum()
+cat['DESI_VRAD']     = _unmask_float(cat['DESI_VRAD'])
+cat['DESI_VRAD_ERR'] = _unmask_float(cat['DESI_VRAD_ERR'])
+cat['p_stream']      = _unmask_float(cat['p_stream'])
+cat['p_cocoon']      = _unmask_float(cat['p_cocoon'])
+
+# desi_label: -1 for stars not observed by DESI, 0 background, 1 stream.
+desi_label_arr = np.where(
+    np.ma.getmaskarray(cat['desi_label']),
+    -1,
+    np.ma.getdata(cat['desi_label']).astype(int))
+cat['desi_label'] = desi_label_arr
+
+n_matched = np.isfinite(np.array(cat['DESI_VRAD'])).sum()
 print(f'{n_matched} / {len(cat)} stars have a DESI VRAD measurement')
+print(f'{(desi_label_arr == 1).sum()} stream, '
+      f'{(desi_label_arr == 0).sum()} background, '
+      f'{(desi_label_arr == -1).sum()} not observed by DESI')
 
 # %% [markdown]
 # ## Save
