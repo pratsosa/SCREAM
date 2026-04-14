@@ -144,7 +144,8 @@ for mask, color, marker, zorder, edgecolor, linewidth, label in zip([desi_TP, de
 
 # Make the legend be 3 columns
 # ax_vrad.legend(loc='upper right', ncol=3)
-ax_vrad.legend(loc='upper right', frameon=True, borderpad=0.1)
+# ax_vrad.legend(loc='upper right', frameon=True, borderpad=0.1)
+ax_vrad.legend(loc='upper right', frameon=False, markerscale=1.5)
 
 
 ax_vrad.set_xlabel(r'$\Phi_1$ (deg)')
@@ -162,7 +163,7 @@ ax_cmd.invert_yaxis()
 ax_cmd.set_xlim(0, .7)
 ax_cmd.set_xlabel(r'$g - r$')
 ax_cmd.set_ylabel(r'$r$')
-ax_cmd.legend(loc='upper right')
+ax_cmd.legend(loc='upper right', frameon=False, markerscale=1.5)
 # ax_cmd.text(0.03, 0.95, '(c)', transform=ax_cmd.transAxes, va='top')
 
 # ── Save ──────────────────────────────────────────────────────────────────────

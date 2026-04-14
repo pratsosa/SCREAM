@@ -20,6 +20,7 @@ class EM_LitLinearModel(L.LightningModule):
                  scaler_mean: np.ndarray, scaler_scale: np.ndarray,
                  n_extinction_iter: int = 10,
                  num_layers=3, hidden_units=256, dropout=0.0, num_mc_samples=10,  # hidden_units: int or list[int]
+                 num_val_mc_samples: int = 10,
                  pct_start=0.3, weight_decay=0.0, layer_norm=False,
                  activation='relu', residual=False):
         super().__init__()
@@ -28,6 +29,7 @@ class EM_LitLinearModel(L.LightningModule):
         self.pos_weight = pos_weight
         self.lr = lr
         self.num_mc_samples = num_mc_samples
+        self.num_val_mc_samples = num_val_mc_samples
         self.pct_start = pct_start
         self.weight_decay = weight_decay
         self.n_extinction_iter = n_extinction_iter
@@ -43,6 +45,8 @@ class EM_LitLinearModel(L.LightningModule):
         self.labels = []
         self.train_logits, self.train_labels = [], []
         self.val_logits, self.val_labels, self.val_true_labels = [], [], []
+        self.val_probs_mc = []       # stores (N_val_mc, B) GPU tensors per batch
+        self.val_probs_nominal = []  # stores (B,) GPU tensors per batch
         self.test_logits, self.test_labels = [], []
         self.EPOCHS = EPOCHS
         self.steps_per_epoch = steps_per_epoch
@@ -56,7 +60,7 @@ class EM_LitLinearModel(L.LightningModule):
         #                          ebv (index 10)
 
         B = x_raw.shape[0]
-        N_mc = self.num_mc_samples
+        N_mc = self.num_val_mc_samples if stage == 'validation' else self.num_mc_samples
 
         # --- Step 1: Unpack ---
         phi1, phi2, pm_phi1, pm_phi2 = x_raw[:, 0], x_raw[:, 1], x_raw[:, 2], x_raw[:, 3]
@@ -142,10 +146,76 @@ class EM_LitLinearModel(L.LightningModule):
         probs_mc = torch.sigmoid(y_pred)  # (N_mc, B)
         p_marginal = probs_mc.mean(dim=0)  # (B,)
 
-        return loss, p_marginal.detach().cpu(), y_cwola.detach().cpu(), y_true.detach().cpu()
+        return loss, p_marginal.detach().cpu(), y_cwola.detach().cpu(), y_true.detach().cpu(), probs_mc.detach()
+
+    def _compute_nominal_scores(self, batch) -> torch.Tensor:
+        """Forward pass on unperturbed (nominal) inputs. Returns sigmoid probs shape (B,) on GPU."""
+        x_raw, y, errors, id_plus_sample, *_ = batch
+
+        phi1, phi2, pm_phi1, pm_phi2 = x_raw[:, 0], x_raw[:, 1], x_raw[:, 2], x_raw[:, 3]
+        G_mag, Bp_mag, Rp_mag        = x_raw[:, 4], x_raw[:, 5], x_raw[:, 6]
+        g_mag, r_mag, z_mag          = x_raw[:, 7], x_raw[:, 8], x_raw[:, 9]
+        ebv                          = errors[:, 10]
+
+        # Convert nominal mags -> fluxes, then back to mags (no noise, but we need extinction)
+        flux_G  = mag_to_flux_gaia(G_mag,  ZP_G)
+        flux_Bp = mag_to_flux_gaia(Bp_mag, ZP_BP)
+        flux_Rp = mag_to_flux_gaia(Rp_mag, ZP_RP)
+        flux_g  = mag_to_flux_ls(g_mag)
+        flux_r  = mag_to_flux_ls(r_mag)
+        flux_z  = mag_to_flux_ls(z_mag)
+
+        G_nom  = flux_to_mag_gaia(flux_G,  ZP_G)
+        Bp_nom = flux_to_mag_gaia(flux_Bp, ZP_BP)
+        Rp_nom = flux_to_mag_gaia(flux_Rp, ZP_RP)
+        g_nom  = flux_to_mag_ls(flux_g)
+        r_nom  = flux_to_mag_ls(flux_r)
+        z_nom  = flux_to_mag_ls(flux_z)
+
+        # Use shape (B, 1) to reuse extinction functions, then squeeze MC dim
+        ebv_e = ebv.unsqueeze(1)  # (B, 1)
+        AG, ABp, ARp = extinction_gaia(
+            G_nom.unsqueeze(1), Bp_nom.unsqueeze(1), Rp_nom.unsqueeze(1),
+            ebv_e, n_iter=self.n_extinction_iter,
+        )
+        Ag, Ar, Az = extinction_ls(ebv_e)
+
+        G0   = (G_nom.unsqueeze(1)  - AG).squeeze(1)
+        Bp0  = (Bp_nom.unsqueeze(1) - ABp).squeeze(1)
+        Rp0  = (Rp_nom.unsqueeze(1) - ARp).squeeze(1)
+        g0   = (g_nom.unsqueeze(1)  - Ag).squeeze(1)
+        r0   = (r_nom.unsqueeze(1)  - Ar).squeeze(1)
+        z0   = (z_nom.unsqueeze(1)  - Az).squeeze(1)
+
+        BpRp0 = Bp0 - Rp0
+        gr0   = g0  - r0
+        rz0   = r0  - z0
+
+        x_nominal = torch.stack([phi1, phi2, pm_phi1, pm_phi2, G0, BpRp0, r0, gr0, rz0], dim=-1)  # (B, 9)
+        x_nominal_scaled = (x_nominal - self.scaler_mean) / self.scaler_scale
+        logits = self.model(x_nominal_scaled).squeeze(-1)  # (B,)
+        return torch.sigmoid(logits).detach()
+
+    @staticmethod
+    def _rank_auc(scores_bg: torch.Tensor, scores_exp: torch.Tensor) -> float:
+        """Mann-Whitney U AUC. O((m+n) log(m+n)), GPU-compatible."""
+        m, n = len(scores_bg), len(scores_exp)
+        combined = torch.cat([scores_bg, scores_exp])
+        order = torch.argsort(combined)
+        ranks = torch.empty_like(order, dtype=torch.float32)
+        ranks[order] = torch.arange(1, m + n + 1, dtype=torch.float32, device=combined.device)
+        return ((ranks[m:].sum() - n * (n + 1) / 2) / (m * n)).item()
+
+    @staticmethod
+    def _mce(scores_bg: torch.Tensor, scores_exp: torch.Tensor, pi: float = 0.5) -> float:
+        """Misclassification error at threshold pi."""
+        n = len(scores_exp)
+        m = len(scores_bg)
+        correct = (scores_exp >= pi).sum() + (scores_bg < pi).sum()
+        return (1.0 - correct.float() / (m + n)).item()
 
     def training_step(self, batch, batch_idx):
-        loss, train_pred, train_true, _ = self.shared_step(batch, stage='train')
+        loss, train_pred, train_true, _, _ = self.shared_step(batch, stage='train')
         if loss is not None:
             self.log("train loss", loss, on_epoch=True)
             self.train_logits.append(train_pred)
@@ -153,15 +223,17 @@ class EM_LitLinearModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, val_pred, val_true, val_actual = self.shared_step(batch, stage='validation')
+        loss, val_pred, val_true, val_actual, probs_mc_batch = self.shared_step(batch, stage='validation')
         if loss is not None:
             self.log("validation loss", loss, on_epoch=True)
-            self.val_logits.append(val_pred)
-            self.val_labels.append(val_true)
-            self.val_true_labels.append(val_actual)
+            self.val_logits.append(val_pred)           # CPU, for sklearn (unchanged)
+            self.val_labels.append(val_true)           # CPU, for sklearn (unchanged)
+            self.val_true_labels.append(val_actual)    # CPU, for sklearn (unchanged)
+            self.val_probs_mc.append(probs_mc_batch)          # GPU, (N_val_mc, B)
+            self.val_probs_nominal.append(self._compute_nominal_scores(batch))  # GPU, (B,)
 
     def test_step(self, batch, batch_idx):
-        loss, test_pred, test_true, _ = self.shared_step(batch, stage='test')
+        loss, test_pred, test_true, _, _ = self.shared_step(batch, stage='test')
         if loss is not None:
             self.log("test loss", loss, on_epoch=True)
             print(test_pred.shape)
@@ -189,6 +261,8 @@ class EM_LitLinearModel(L.LightningModule):
         self.val_logits.clear()
         self.val_labels.clear()
         self.val_true_labels.clear()
+        self.val_probs_mc.clear()
+        self.val_probs_nominal.clear()
 
     def on_validation_epoch_end(self):
         if len(self.val_logits) == 0:
@@ -218,6 +292,35 @@ class EM_LitLinearModel(L.LightningModule):
 
         self.log("True validation f1 score (0.8 thresh)", val_f1_80, prog_bar=True)
         self.log("True validation MCC score (0.8 thresh)", val_mcc_80)
+
+        # --- AUC / MCE (GPU-side until final .item() extractions) ---
+        # NOTE: single-GPU only. If multi-GPU (DDP) is added, replace this block with
+        # self.all_gather() before concatenating so metrics are computed over the full
+        # validation set rather than per-GPU shards.
+        all_probs_mc = torch.cat(self.val_probs_mc, dim=1)   # (N_val_mc, total_N) — GPU
+        all_labels   = torch.cat(self.val_labels)             # (total_N,) — CPU (sklearn path)
+        mask_bg  = (all_labels == 0).to(all_probs_mc.device)  # move mask to GPU (one-time, ~14 KB)
+        mask_exp = (all_labels == 1).to(all_probs_mc.device)
+
+        aucs, mces = [], []
+        for k in range(all_probs_mc.shape[0]):
+            scores_bg  = all_probs_mc[k][mask_bg]
+            scores_exp = all_probs_mc[k][mask_exp]
+            aucs.append(self._rank_auc(scores_bg, scores_exp))
+            mces.append(self._mce(scores_bg, scores_exp))
+
+        self.log("val/auc_mean", float(np.mean(aucs)))
+        self.log("val/auc_std",  float(np.std(aucs)))
+        self.log("val/mce_mean", float(np.mean(mces)))
+        self.log("val/mce_std",  float(np.std(mces)))
+
+        # Nominal (unperturbed) metrics
+        nom = torch.cat(self.val_probs_nominal)               # (total_N,) — GPU
+        self.log("val/auc_nominal", self._rank_auc(nom[mask_bg], nom[mask_exp]))
+        self.log("val/mce_nominal", self._mce(nom[mask_bg], nom[mask_exp]))
+
+        self.val_probs_mc.clear()
+        self.val_probs_nominal.clear()
 
     def on_test_epoch_start(self):
         self.test_logits.clear()

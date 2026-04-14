@@ -1,19 +1,19 @@
 # EM-CATHODE MLP — hyperparameters extracted from GD1_EM_CATHODE_MLP.ipynb
 
 # Model architecture
-hidden_units: [512, 256, 64]
-num_layers: 3
-activation: gelu
+hidden_units: [512, 256, 256, 64]
+num_layers: 4
+activation: relu
 use_layer_norm: false
 use_residual: false
 dropout: 0.0
 
 # Training
-lr: 0.02465
-pct_start: 0.1         # Fraction of training spent warming up the LR (OneCycleLR)
+lr: 0.01
+pct_start: 0.1          # Fraction of training spent warming up the LR (OneCycleLR)
 max_epochs: 100
-batch_size: 2048
-weight_decay: 0.0016925158090838244
+batch_size: 512
+weight_decay: 0.0
 num_mc_samples: 10
 
 # Data augmentation
