@@ -14,6 +14,9 @@
 source /global/common/software/nersc/pe/conda/24.10.0/Miniforge3-24.7.1-0/etc/profile.d/conda.sh
 conda activate /global/homes/p/pratsosa/.conda/envs/myenv
 
+export TMPDIR=$PSCRATCH/tmp
+mkdir -p $TMPDIR
+
 cd /global/homes/p/pratsosa/SCREAM
 
 # SWEEP_ID must be exported before sbatch, e.g.:
