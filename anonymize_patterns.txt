@@ -1,0 +1,14 @@
+# All patterns are matched case-insensitively by the script (re.IGNORECASE)
+
+# Author / collaborator names
+alex
+pratsos
+pratsosa
+biprateep
+\bting(?:s|'s)?\b
+emma
+
+# Institutions
+uoft
+toronto
+university\s+of\s+toronto
