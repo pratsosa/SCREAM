@@ -97,6 +97,21 @@ desi_TP = spec_label_desi  &  scream_label_desi
 desi_FP = ~spec_label_desi &  scream_label_desi
 desi_FN = spec_label_desi  & ~scream_label_desi
 desi_TN = ~spec_label_desi & ~scream_label_desi
+
+print(f'DESI_TP: {np.sum(desi_TP)}')
+print(f'DESI_FP: {np.sum(desi_FP)}')
+print(f'DESI_FN: {np.sum(desi_FN)}')
+print(f'DESI_TN: {np.sum(desi_TN)}')
+
+desi_SF = np.array(cat_desi['stream']).astype(bool)
+# desi_SF_FP = desi_SF & ~spec_label_desi & ~scream_label_desi
+
+desi_SF_TP = desi_SF & scream_label_desi
+desi_SF_FP = ~desi_SF & scream_label_desi
+desi_SF_FN = desi_SF & ~scream_label_desi
+desi_SF_TN = ~desi_SF & ~scream_label_desi
+
+
 # Print metrics (accuracy, precision, recall) for DESI-labeled subset.
 accuracy  = np.mean(scream_label_desi == spec_label_desi)
 precision = np.sum(desi_TP) / np.sum(scream_label_desi)
@@ -211,3 +226,64 @@ ax.set_xlabel(r'$g - r$')
 ax.set_ylabel(r'$r$')
 ax.legend(loc='upper right', frameon=False, markerscale=2, handletextpad=0.05)
 fig.savefig(OUTPUT_PATH.replace('.pdf', '_desi_cmd.png'), dpi=300, bbox_inches='tight')
+
+
+# Adding a plot which has the SF False positives in VGSR vs Phi1 space
+
+fig = plt.figure(figsize=(5.5, 3.5), constrained_layout=True)
+gs  = fig.add_gridspec(2, 2, width_ratios=[1.4, 1])
+ax_sky  = fig.add_subplot(gs[0, 0])              # Panel A: φ1 vs φ2
+ax_vrad = fig.add_subplot(gs[1, 0], sharex=ax_sky)  # Panel B: VRAD vs φ1
+ax_cmd  = fig.add_subplot(gs[:, 1])   # Panel C: r₀ vs g₀−r₀ (full height)
+
+# ── Panel A: φ1 vs φ2 ────────────────────────────────────────────────────────
+ax_sky.hist2d(phi1[~sf_label], phi2[~sf_label],
+              bins=150, norm=LogNorm(), cmap='gray_r', alpha=0.4)
+for mask, color, marker, zorder, edgecolor, linewidth in zip([TP, FP, FN], _COLORS, _MARKERS, _ZORDER, _EDGE_COLORS, _LINEWIDTHS):
+    ax_sky.scatter(phi1[mask], phi2[mask],
+                   c=color, marker=marker, s=s, alpha=alpha, edgecolors=edgecolor, linewidths=linewidth, zorder=zorder)
+ax_sky.set_ylabel(r'$\Phi_2$ (deg)')
+ax_sky.set_ylim(-5.25, None)
+plt.setp(ax_sky.get_xticklabels(), visible=False)
+# ax_sky.text(0.03, 0.95, '(a)', transform=ax_sky.transAxes, va='top')
+
+# ── Panel B: VRAD vs φ1 ──────────────────────────────────────────────────────
+# ax_vrad.errorbar(phi1[vrad_mask], vrad[vrad_mask],
+#                  yerr=vrad_err[vrad_mask],
+#                  fmt='o', color=_COLORS[0],
+#                  linewidth=0.8, capsize=2, ms=4, alpha=0.7)
+# ax_vrad.scatter(phi1[vrad_mask], vrad[vrad_mask], c=_COLORS[0],  s=s, alpha=alpha, 
+#                 marker='o', edgecolors='k', linewidths=0.5, zorder=3)
+ax_vrad.hist2d(desi_phi1[desi_SF_TN], vrad[desi_SF_TN], bins=150, norm=LogNorm(), cmap='gray_r', alpha=0.4)
+for mask, color, marker, zorder, edgecolor, linewidth, label in zip([desi_SF_TP, desi_SF_FP, desi_SF_FN], _COLORS, _MARKERS, [1, 3, 2], _EDGE_COLORS, _LINEWIDTHS, _LABELS_DESI):
+    ax_vrad.scatter(desi_phi1[mask], vrad[mask],
+                   c=color, marker=marker, s=s, alpha=alpha, edgecolors=edgecolor, linewidths=linewidth, zorder=zorder, label=label)
+# ax_vrad.scatter(desi_phi1[desi_SF_FP], vrad[desi_SF_FP], c='C8', marker='D', s=s, alpha=alpha, edgecolors='k', linewidths=0.5, zorder=0, label='FP SF (DESI)')
+ax_vrad.set_ylim(-300, 300)
+# Make the legend be 3 columns
+# ax_vrad.legend(loc='upper right', ncol=3)
+# ax_vrad.legend(loc='upper right', frameon=True, borderpad=0.1)
+# I need to move the markers closer to the text, no frame
+# ax_vrad.legend(loc='upper right', frameon=False, markerscale=2, handletextpad=0.05, fontsize=8)
+
+
+ax_vrad.set_xlabel(r'$\Phi_1$ (deg)')
+ax_vrad.set_ylabel(r'$V_\mathrm{rad}\ (\mathrm{km\,s}^{-1})$')
+# ax_vrad.text(0.03, 0.95, '(b)', transform=ax_vrad.transAxes, va='top')
+
+# ── Panel C: r₀ vs g₀−r₀ CMD ─────────────────────────────────────────────────
+ax_cmd.hist2d(g_r[~sf_label], r0[~sf_label],
+              bins=150, norm=LogNorm(), cmap='gray_r', alpha=0.4)
+for mask, color, marker, label, zorder, edgecolor, linewidth in zip([TP, FP, FN], _COLORS, _MARKERS, _LABELS_SF, _ZORDER, _EDGE_COLORS, _LINEWIDTHS):
+    ax_cmd.scatter(g_r[mask], r0[mask],
+                   c=color, marker=marker, s=s, alpha=alpha, edgecolors=edgecolor, linewidths=linewidth,
+                   label=label, zorder=zorder)
+ax_cmd.invert_yaxis()
+ax_cmd.set_xlim(0, .7)
+ax_cmd.set_xlabel(r'$g - r$')
+ax_cmd.set_ylabel(r'$r$')
+ax_cmd.legend(loc='upper right', frameon=False, markerscale=2, handletextpad=0.05)
+# ax_cmd.text(0.03, 0.95, '(c)', transform=ax_cmd.transAxes, va='top')
+
+# ── Save ──────────────────────────────────────────────────────────────────────
+fig.savefig('/global/homes/p/pratsosa/SCREAM/notebooks/val_plot_SF.png', dpi=300, bbox_inches='tight')
