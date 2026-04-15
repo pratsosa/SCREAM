@@ -175,7 +175,7 @@ def make_train_fn(seed_offset: int):
                     strict=True,
                 )
 
-                wandb_logger = WandbLogger(log_model=False, name=run_name)
+                wandb_logger = WandbLogger(log_model="all", name=run_name)
 
                 trainer = L.Trainer(
                     accelerator="gpu",

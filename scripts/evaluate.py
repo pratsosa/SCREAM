@@ -90,7 +90,7 @@ def _run_inference(loader, model, device):
                 id_plus_sample.to(device),
                 source_id.to(device),
             )
-            _, p_marginal, _, y_true = model.shared_step(batch_on_device, stage='eval')
+            _, p_marginal, _, y_true, _ = model.shared_step(batch_on_device, stage='eval')
 
             all_probs.append(p_marginal.numpy())
             all_true.append(y_true.numpy())

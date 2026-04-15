@@ -16,10 +16,23 @@ mkdir -p $TMPDIR
 
 cd /global/homes/p/pratsosa/SCREAM
 
-for GPU_ID in 0 1 2 3; do
-    CUDA_VISIBLE_DEVICES=$GPU_ID python scripts/sweep_train.py \
-        --sweep-id "$SWEEP_ID" \
-        --count 25 &
-done
+# Seed assignment for 50-run sweeps: agents cover non-overlapping seed ranges.
+#   GPU 0: seeds  1-13 (offset=0,  count=13)
+#   GPU 1: seeds 14-26 (offset=13, count=13)
+#   GPU 2: seeds 27-38 (offset=26, count=12)
+#   GPU 3: seeds 39-50 (offset=38, count=12)
+# Adjust offsets/counts proportionally for sweeps with a different run_cap.
+
+CUDA_VISIBLE_DEVICES=0 python scripts/sweep_train.py \
+    --sweep-id "$SWEEP_ID" --count 13 --seed-offset 0  &
+
+CUDA_VISIBLE_DEVICES=1 python scripts/sweep_train.py \
+    --sweep-id "$SWEEP_ID" --count 13 --seed-offset 13 &
+
+CUDA_VISIBLE_DEVICES=2 python scripts/sweep_train.py \
+    --sweep-id "$SWEEP_ID" --count 12 --seed-offset 26 &
+
+CUDA_VISIBLE_DEVICES=3 python scripts/sweep_train.py \
+    --sweep-id "$SWEEP_ID" --count 12 --seed-offset 38 &
 
 wait
