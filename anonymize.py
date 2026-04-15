@@ -114,7 +114,7 @@ if tracked_ipynb:
     print(f"\nRemoving {len(tracked_ipynb)} tracked notebook(s):")
     for nb in tracked_ipynb:
         print(f"  {nb}")
-    subprocess.run(["git", "rm", "--"] + tracked_ipynb, cwd=REPO_ROOT, check=True)
+    subprocess.run(["git", "rm", "-f", "--"] + tracked_ipynb, cwd=REPO_ROOT, check=True)
 else:
     print("\nNo tracked .ipynb files to remove.")
 
@@ -133,7 +133,7 @@ if "*.ipynb" not in content:
 data_dir = REPO_ROOT / "data"
 if data_dir.exists():
     subprocess.run(
-        ["git", "rm", "-r", "--ignore-unmatch", "data/"],
+        ["git", "rm", "-rf", "--ignore-unmatch", "data/"],
         cwd=REPO_ROOT, check=True
     )
     gitignore = REPO_ROOT / ".gitignore"
