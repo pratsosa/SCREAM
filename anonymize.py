@@ -127,7 +127,25 @@ if "*.ipynb" not in content:
     print("Appended *.ipynb to .gitignore")
 
 # ---------------------------------------------------------------------------
-# Step 4: Delete the patterns file
+# Step 4: Remove data/ directory
+# ---------------------------------------------------------------------------
+
+data_dir = REPO_ROOT / "data"
+if data_dir.exists():
+    subprocess.run(
+        ["git", "rm", "-r", "--ignore-unmatch", "data/"],
+        cwd=REPO_ROOT, check=True
+    )
+    gitignore = REPO_ROOT / ".gitignore"
+    content = gitignore.read_text() if gitignore.exists() else ""
+    if "data/" not in content:
+        with gitignore.open("a") as f:
+            f.write("\n# Data directory excluded from anon branch\ndata/\n")
+        print("Appended data/ to .gitignore")
+    print("Removed data/ directory")
+
+# ---------------------------------------------------------------------------
+# Step 5: Delete the patterns file
 # ---------------------------------------------------------------------------
 
 PATTERNS_FILE.unlink()
