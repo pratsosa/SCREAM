@@ -25,9 +25,10 @@ plt.rcParams['font.family'] = prop.get_name()
 # ## Constants
 
 # %%
-MODEL_PROB_THRESHOLD = 0.91
-CROSSMATCH_PATH = '/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_VRAD.fits'
-OUTPUT_PATH     = f'/global/homes/p/pratsosa/SCREAM/notebooks/validation_3panel.pdf'
+# MODEL_PROB_THRESHOLD = 0.91
+MODEL_PROB_THRESHOLD = 0.878
+CROSSMATCH_PATH = '/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_VRAD2.fits'
+OUTPUT_PATH     = f'/global/homes/p/pratsosa/SCREAM/notebooks/V2_validation_3panel.pdf'
 
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 

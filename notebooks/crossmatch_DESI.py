@@ -17,7 +17,7 @@ import pandas as pd
 DATA_PATH      = '/pscratch/sd/p/pratsosa'
 DESI_DATA_PATH = '/pscratch/sd/p/pratsosa/DESI_data'
 RESULTS_PATH   = '/pscratch/sd/p/pratsosa/GD1_SCREAM/results'
-OUTPUT_PATH    = '/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_VRAD.fits'
+OUTPUT_PATH    = '/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_VRAD2.fits'
 
 # %% [markdown]
 # ## Step 1 — Core catalog
@@ -26,7 +26,8 @@ OUTPUT_PATH    = '/pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_VRAD.fits'
 # %%
 cat = Table.read(f'{DATA_PATH}/GD-1_gaia_x_decals_040726.fits')
 
-preds = pd.read_csv(f'{RESULTS_PATH}/cv_test_cv_predictions.csv')
+# preds = pd.read_csv(f'{RESULTS_PATH}/cv_test_cv_predictions.csv')
+preds = pd.read_csv(f'{RESULTS_PATH}/cv2_hearty_sweep_cv_predictions.csv')
 # CSV source_id columns default to float64; coerce before joining.
 preds['source_id'] = preds['source_id'].astype(np.int64)
 preds = Table.from_pandas(preds)
