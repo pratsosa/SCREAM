@@ -261,7 +261,7 @@ python scripts/evaluate.py \
 
 By default the script loads `best.ckpt` and determines the classification threshold as the point on the validation-set precision–recall curve closest to (precision=1, recall=1). A manual threshold can be specified with `--threshold`.
 
-Inference runs 100 MC noise samples per star on the test set, with perturbation applied only to the proper-motion error columns. The script outputs:
+Inference runs 100 MC noise samples per star on the test set. The script outputs:
 
 ```
 $PSCRATCH/GD1_SCREAM/
@@ -299,13 +299,5 @@ The test suite covers the loss function, model forward passes and parameter coun
 ## Current Limitations and Planned Extensions
 
 SCREAM is under active development. The following extensions are planned:
-
-- **Cross-validation inference over the full dataset.** The current pipeline evaluates on a fixed held-out test set. A k-fold cross-validation scheme is planned to allow membership probabilities to be computed for every star in the catalog, not just those in the test partition.
-
-- **Full covariance matrix error inputs.** The current error marginalization uses only the diagonal proper-motion uncertainties ($\sigma_{\mu_{1}}$, $\sigma_{\mu_{2}}$). Future versions will incorporate the full Gaia astrometric covariance matrix as input to the loss, enabling per-star correlated perturbations.
-
-- **Additional photometric error features.** Systematic and statistical uncertainties on the DECaLS photometric features (rmag0, g₀−r₀, r₀−z₀) are not yet propagated through the MC loss. The `error_features` field in the stream YAML is designed as the extension point for this.
-
-- **DESI radial velocity cross-match.** Cross-matching SCREAM predictions against DESI spectroscopic radial velocity data is planned as a downstream validation step and has been deferred pending a separate cross-matching pipeline update.
 
 - **Additional streams.** The configuration system (stream YAML + `StreamConfig` dataclass) is designed to support new streams by adding a single YAML file, with no changes to the Python codebase.

@@ -134,7 +134,7 @@ def train_fold(fold_idx, run_name, n_folds, stream_cfg, train_cfg, wandb_project
         accelerator="gpu",
         max_epochs=train_cfg.max_epochs,
         log_every_n_steps=1,
-        precision="16-mixed",
+        precision="32-true", # I used to use 16-mixed but I'll try 32-true for stability
         logger=wandb_logger,
         callbacks=[checkpoint_callback, best_ckpt_callback, early_stop_callback],
     )

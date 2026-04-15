@@ -137,9 +137,11 @@ def main():
         accelerator="gpu",
         max_epochs=train_cfg.max_epochs,
         log_every_n_steps=1,
-        precision="16-mixed",
+        precision="16-mixed", # I used to use 16-mixed but I'll try 32-true for stability
         logger=wandb_logger,
         callbacks=[checkpoint_callback, best_ckpt_callback, early_stop_callback],
+        # gradient_clip_val=1.0,
+        # gradient_clip_algorithm="norm",
     )
 
     trainer.fit(model=model, datamodule=data_module)
