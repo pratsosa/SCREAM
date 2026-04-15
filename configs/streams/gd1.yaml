@@ -1,0 +1,73 @@
+name: gd1
+
+# Raw input for the normalizing flow (FITS file, stream-aligned coordinates)
+# raw_data_path: /pscratch/sd/p/XXXXa/GD-1_gaia_x_decals_stream_prep.fits
+raw_data_path: /pscratch/sd/p/XXXXa/GD-1_gaia_x_decals_040726.fits
+
+# Output of train_flow.py; input to train_em_cathode.py
+# generated_data_path: /pscratch/sd/p/XXXXa/GD1_SCREAM/generated/gd1_generated.csv
+# generated_data_path: /global/homes/p/XXXXa/Notebooks/GD1_errs_LS_CATHODE_4HL_128_HD_16K_3e4LR_200epochs.csv
+generated_data_path: /pscratch/sd/p/XXXXa/GD1_SCREAM/generated/20260407_150456/gd1_generated.csv
+
+# Features consumed by the MLP DataModule (post-sampling + extinction correction, in column order)
+features:
+  - phi1
+  - phi2
+  - pm_phi1
+  - pm_phi2
+  - G0
+  - Bp0_Rp0
+  - rmag0
+  - g0_r0
+  - r0_z0
+
+# Error tensor column order (EBV always last)
+error_features:
+  - phot_g_flux_err
+  - phot_bp_flux_err
+  - phot_rp_flux_err
+  - flux_err_g
+  - flux_err_r
+  - flux_err_z
+  - pmra_error
+  - pmdec_error
+  - ra_error
+  - dec_error
+  - ebv
+
+# Normalizing flow: data columns (all columns except the conditioning column)
+flow_data_columns:
+  - phi1
+  - phi2
+  - pm_phi2
+  - G_mag
+  - Bp_mag
+  - Rp_mag
+  - g_mag
+  - r_mag
+  - z_mag
+  - phot_g_flux_err
+  - phot_bp_flux_err
+  - phot_rp_flux_err
+  - flux_err_g
+  - flux_err_r
+  - flux_err_z
+  - pmra_error
+  - pmdec_error
+  - ra_error
+  - dec_error
+
+# Normalizing flow: conditioning column
+flow_cond_columns:
+  - pm_phi1
+
+# Signal region definition.
+# null → use the pre-computed 'signal_region' boolean column in the raw FITS file.
+# [low, high] → derive the signal region dynamically from pm_ra values.
+pm_ra_signal_range: null
+
+quality_cuts:
+  parallax_max: 1.0
+  color_min: 0.5
+  color_max: 1.0
+  gmag_max: 20.2

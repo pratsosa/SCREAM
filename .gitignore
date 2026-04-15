@@ -1,0 +1,27 @@
+.claude
+CLAUDE.md
+
+# Build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+
+# SLURM output files
+*train_flow.out
+
+# wandb files
+wandb/
+
+# Dev stuff I'm testing out
+# dev/
+
+# Ting Tutorial
+**tutorial**
+
+# JSON settings
+**settings.json**
+# Notebooks excluded from anon branch
+*.ipynb
+
+# Data directory excluded from anon branch
+data/
