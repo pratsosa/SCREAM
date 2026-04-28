@@ -6,7 +6,7 @@ computes DECaLS magnitudes, crossmatches with StreamFinder labels, converts
 to stream coordinates, applies quality cuts, defines the signal region,
 and saves a cleaned FITS file.
 
-Run from SCREAM/dev/:
+Run from SCREAM/data/:
     python GD1_data_prep.py
 """
 
