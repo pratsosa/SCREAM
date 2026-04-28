@@ -16,7 +16,7 @@ The current application is the GD-1 stream, using a cross-matched catalog of Gai
 
 ## Method
 
-SCREAM implements **EM-CATHODE**: an extension of the CATHODE anomaly-detection framework ([Hallin et al. 2022](https://ui.adsabs.harvard.edu/abs/2022PhRvD.106e5006H/abstract)) that marginalizes over astrometric measurement errors via Monte Carlo sampling during both training and inference.
+SCREAM implements **EM-CATHODE**: an extension of the CATHODE anomaly-detection framework ([Hallin et al. 2022](https://ui.adsabs.harvard.edu/abs/2022PhRvD.106e55006H/abstract)) that marginalizes over measurement errors via Monte Carlo sampling during both training and inference.
 
 The pipeline has two sequential stages.
 
@@ -30,13 +30,15 @@ After training, the flow is used to generate synthetic background samples condit
 
 The signal-region stars (label 1) and the flow-generated background (label 0) are used as a weakly supervised training set under the **Classification Without Labels (CWoLa)** paradigm. An MLP classifier is trained to distinguish the two populations using the full set of astrometric and photometric features.
 
-During each training step, each star is perturbed *N* times by its Gaia proper-motion measurement errors ($\sigma_{\mu_{1}}$, $\sigma_{\mu_{2}}$), producing *N* logit predictions per star. The loss is the **Monte Carlo marginal binary cross-entropy**:
+During each training step, each star is perturbed *N* times using its true per-star measurement errors from the Gaia and DECaLS catalogs. Photometric features are sampled in flux space — each band's magnitude is converted to flux, perturbed by the measured per-star flux uncertainty, then converted back to a magnitude — after which extinction correction is applied iteratively to each MC sample in the forward pass. Astrometric features (φ₁, φ₂, μ₁, μ₂) are perturbed directly using their measured per-star uncertainties. The 11 error quantities used (6 photometric flux errors + 4 astrometric errors + E(B−V)) are all real catalog values; no artificial noise scaling is applied.
+
+The loss is the **Monte Carlo marginal binary cross-entropy**:
 
 $$\mathcal{L} = -\frac{1}{B} \sum_{b=1}^{B} \log \left[ \frac{1}{N} \sum_{j=1}^{N} p(y_b \mid \tilde{x}_{b,j}) \right]$$
 
-where $\tilde{x}_{b,j}$ is the $j$-th noise-perturbed sample of star $b$ and $p(y|\tilde{x})$ is the predicted probability. This formulation marginalizes over measurement uncertainty in a principled way, making the classifier's decisions robust to astrometric errors.
+where $\tilde{x}_{b,j}$ is the $j$-th noise-perturbed sample of star $b$ and $p(y|\tilde{x})$ is the predicted probability. This formulation marginalizes over measurement uncertainty in a principled way, making the classifier's decisions robust to errors.
 
-During inference, 100 MC samples are drawn per star and averaged in probability space to yield a final stream membership probability.
+During validation and inference, 10 MC samples are drawn per star and averaged in probability space. Validation metrics include AUC (Mann-Whitney U, averaged over MC samples and computed on nominal features) and MCE (minimum classifier error), in addition to precision, recall, and F1 at a fixed threshold.
 
 ---
 
@@ -65,7 +67,7 @@ SCREAM/
 │   │   └── lit_mlp.py          # LitLinearModel (baseline, no error marginalisation)
 │   ├── plotting/
 │   │   ├── evaluation.py       # Confusion matrices
-│   │   ├── spatial.py          # $\phi_1$/$\phi_2$ sky position plots
+│   │   ├── spatial.py          # φ₁/φ₂ sky position plots
 │   │   ├── kinematics.py       # Proper motion track plots
 │   │   └── photometry.py       # Gaia and DECaLS color–magnitude diagrams
 │   └── utils/
@@ -75,18 +77,35 @@ SCREAM/
 │
 ├── configs/
 │   ├── streams/
-│   │   └── gd1.yaml            # GD-1 stream: features, data paths, quality cuts
+│   │   └── gd1.yaml            # GD-1 stream: features, error features, data paths, quality cuts
 │   └── experiments/
 │       └── em_cathode_mlp.yaml # MLP hyperparameters
 │
 ├── scripts/
 │   ├── train_flow.py           # CLI: train normalizing flow + generate background
-│   ├── train_em_cathode.py     # CLI: train EM-CATHODE MLP classifier
-│   └── evaluate.py             # CLI: load checkpoint, run inference, write plots
+│   ├── train_em_cathode.py     # CLI: single-run MLP training (exploratory)
+│   ├── cross_validate.py       # CLI: K-fold cross-validation (primary paper path)
+│   ├── evaluate.py             # CLI: inference + plots for a single run
+│   ├── evaluate_cv.py          # CLI: aggregate CV predictions + diagnostic plots
+│   └── sweep_train.py          # CLI: W&B hyperparameter sweep agent
 │
 ├── slurm/
 │   ├── train_flow.sh           # NERSC batch script for flow training (1 GPU, 1h30)
-│   └── train_em_cathode.sh     # NERSC batch script for MLP training (1 GPU, 4h)
+│   ├── train_em_cathode.sh     # NERSC batch script for MLP training (1 GPU, 4h)
+│   └── sweep_em_cathode.sh     # NERSC batch script for sweep agents
+│
+├── data/                       # Data pipeline scripts
+│   ├── GD1_download.py         # Query DataLab: Gaia × DECaLS → HDF5
+│   ├── GD1_data_prep.py        # Preprocess HDF5 → FITS (stream coords, quality cuts)
+│   ├── fetcher_new.py          # Parallel DataLab query engine (used by GD1_download.py)
+│   ├── adql_utils.py           # Coordinate transforms (φ₁/φ₂, μ₁/μ₂)
+│   ├── transforms.py           # Flux/magnitude conversion, extinction helpers
+│   └── README.md               # Documents that real data lives in $PSCRATCH
+│
+├── figures/                    # Paper figure scripts and rendered outputs
+│   ├── crossmatch_DESI.py      # Join CV predictions + DESI VRAD → FITS
+│   ├── validation_figure.py    # Generate 3-panel validation figure
+│   └── *.pdf / *.png           # Rendered figure files
 │
 ├── tests/
 │   ├── test_losses.py
@@ -94,10 +113,8 @@ SCREAM/
 │   ├── test_data.py
 │   └── test_transforms.py
 │
-├── data/
-│   └── README.md               # Documents that real data lives in $PSCRATCH
-│
-└── archival_code/              # Pre-refactor notebooks and scripts (reference only)
+├── dev/                        # Exploratory and reference material (not part of pipeline)
+└── notebooks/                  # Exploratory scratch notebooks (not part of pipeline)
 ```
 
 ---
@@ -106,7 +123,7 @@ SCREAM/
 
 Raw data is stored in `$PSCRATCH` and is never committed to this repository. See [data/README.md](data/README.md) for a description of the input files. The authoritative paths are defined in `configs/streams/gd1.yaml` and consumed directly by the training scripts.
 
-The raw input for the normalizing flow is a FITS file containing the Gaia × DECaLS cross-matched catalog in stream-aligned coordinates, with precomputed photometric quantities and a `signal_region` boolean column. The generated background CSV produced by `train_flow.py` is the direct input to `train_em_cathode.py`.
+The raw input for the normalizing flow is a FITS file containing the Gaia × DECaLS cross-matched catalog in stream-aligned coordinates, with precomputed photometric quantities, per-star measurement errors, and a `signal_region` boolean column. The generated background CSV produced by `train_flow.py` is the direct input to `train_em_cathode.py` and `cross_validate.py`.
 
 ---
 
@@ -129,18 +146,26 @@ The editable install makes `scream.*` importable from any directory without `PYT
 
 All stream-specific parameters and model hyperparameters are defined in YAML files and loaded into typed dataclasses at runtime.
 
-**`configs/streams/gd1.yaml`** — stream geometry, feature lists, data paths, and quality cuts:
+**`configs/streams/gd1.yaml`** — stream geometry, feature lists, error feature lists, data paths, and quality cuts:
 
 ```yaml
 name: gd1
-raw_data_path: /pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_stream_prep.fits
+raw_data_path: /pscratch/sd/p/pratsosa/GD-1_gaia_x_decals_040726.fits
 generated_data_path: /pscratch/sd/p/pratsosa/GD1_SCREAM/generated/<run_id>/gd1_generated.csv
 
-features: [ra, dec, pm_ra, pm_dec, gmag, color, rmag0, g_r, r_z]
-error_features: [pm_ra_error, pm_dec_error]
+features: [phi1, phi2, pm_phi1, pm_phi2, G0, Bp0_Rp0, rmag0, g0_r0, r0_z0]
 
-flow_data_columns: [ra, dec, pm_dec, pm_ra_error, pm_dec_error, gmag, color, rmag0, g_r, r_z]
-flow_cond_columns: [pm_ra]
+# True per-star measurement errors; EBV always last
+error_features:
+  [phot_g_flux_err, phot_bp_flux_err, phot_rp_flux_err,
+   flux_err_g, flux_err_r, flux_err_z,
+   pmra_error, pmdec_error, ra_error, dec_error, ebv]
+
+flow_data_columns: [phi1, phi2, pm_phi2, G_mag, Bp_mag, Rp_mag, g_mag, r_mag, z_mag,
+                    phot_g_flux_err, phot_bp_flux_err, phot_rp_flux_err,
+                    flux_err_g, flux_err_r, flux_err_z,
+                    pmra_error, pmdec_error, ra_error, dec_error]
+flow_cond_columns: [pm_phi1]
 
 pm_ra_signal_range: null   # null → use pre-computed 'signal_region' FITS column
 
@@ -154,51 +179,102 @@ quality_cuts:
 **`configs/experiments/em_cathode_mlp.yaml`** — model architecture and training hyperparameters:
 
 ```yaml
-hidden_units: 384
-num_layers: 4
-activation: relu
-lr: 0.01
+hidden_units: [256, 128, 32]
+num_layers: 3
+activation: gelu
+use_layer_norm: false
+use_residual: false
+dropout: 0.0
+
+lr: 0.02389
 pct_start: 0.1       # fraction of training spent in LR warmup (OneCycleLR)
 max_epochs: 100
-batch_size: 25000
+batch_size: 512
+weight_decay: 0.00465
 num_mc_samples: 10   # MC noise samples per star during training
-p_wiggle: 0.5        # fractional std applied as photometric feature noise
-early_stopping_patience: 35
+
+early_stopping_patience: 20
 seed: 12345
 wandb_project: SCREAM_GD1
 ```
+
+Key `TrainConfig` fields:
+
+| Field | Description |
+|---|---|
+| `hidden_units` | Hidden layer widths — int (all layers equal) or list[int] |
+| `num_layers` | Number of hidden layers |
+| `activation` | Activation function (`relu`, `gelu`, etc.) |
+| `use_layer_norm` | Apply LayerNorm after each hidden layer |
+| `use_residual` | Use residual (skip) connections between layers |
+| `dropout` | Dropout probability applied after each hidden layer |
+| `lr` | Peak learning rate (OneCycleLR) |
+| `pct_start` | Fraction of training spent in LR warmup |
+| `weight_decay` | AdamW weight decay |
+| `num_mc_samples` | MC noise samples per star per training step |
+| `early_stopping_patience` | Val-loss patience before early stopping |
 
 ---
 
 ## Workflow
 
-The pipeline proceeds in two sequential stages. Each stage produces artifacts consumed by the next.
+The full pipeline, from raw data download to the paper validation figure. Run all commands from `SCREAM/` unless noted. Activate the environment first:
 
-### Stage 1: Flow Training and Background Generation
+```bash
+module load conda && conda activate myenv
+```
+
+---
+
+### Stage 0a — Download data
+
+```bash
+cd data/
+python GD1_download.py
+```
+
+Queries DataLab (NOIRLab) for Gaia × DECaLS cross-matched photometry along the GD-1 track in 30 parallel chunks and saves the result to HDF5.
+
+**Output:** `$PSCRATCH/fetcher_output_new/GD-1-I21/GD-1-I21_matched.hdf5`
+
+---
+
+### Stage 0b — Data preparation
+
+```bash
+cd data/
+python GD1_data_prep.py
+```
+
+Applies extinction corrections, computes DECaLS magnitudes, crossmatches with StreamFinder membership labels, converts to stream-aligned coordinates (φ₁, φ₂, μ₁, μ₂), applies quality cuts, and defines the signal region.
+
+**Input:** HDF5 from Stage 0a  
+**Output:** `$PSCRATCH/GD-1_gaia_x_decals_stream_prep.fits`
+
+---
+
+### Stage 1 — Train normalizing flow and generate background
 
 ```bash
 python scripts/train_flow.py --stream configs/streams/gd1.yaml
-```
-
-Or via SLURM:
-
-```bash
+# or on NERSC:
 sbatch slurm/train_flow.sh
 ```
 
-This script trains a `pzflow` normalizing flow on the sideband stars and immediately generates background samples in the same process (the flow is not serialized to disk, as the custom bijector stack does not survive pickle round-trips). Each run is written to a timestamped directory:
+Trains a `pzflow` normalizing flow on sideband stars and immediately generates synthetic background samples (4× the signal-region count by default). The flow is not serialized to disk; generation happens in the same process.
 
+**Output:**
 ```
 $PSCRATCH/GD1_SCREAM/generated/<run_id>/
-    gd1.yaml                  # copy of stream config
-    run_params.yaml           # all CLI arguments
-    gd1_generated.csv         # combined signal + generated background
+    gd1.yaml
+    run_params.yaml
+    gd1_generated.csv          # combined signal + generated background
     plots/
         loss_curves.png
-        histograms/           # one histogram per flow data column
+        histograms/
 ```
 
-After a successful run, update `generated_data_path` in `configs/streams/gd1.yaml` to point to the new CSV before proceeding to Stage 2.
+After a successful run, update `generated_data_path` in `configs/streams/gd1.yaml` to point to the new CSV before proceeding.
 
 Key CLI options:
 
@@ -211,76 +287,116 @@ Key CLI options:
 | `--patience` | None | Early stopping patience (disabled by default) |
 | `--seed` | 12345 | Random seed |
 
-### Stage 2: MLP Training
+---
+
+### Stage 2 — Train classifier
+
+**Stage 2a — Single-run (exploratory path)**
 
 ```bash
 python scripts/train_em_cathode.py \
     --stream configs/streams/gd1.yaml \
     --experiment configs/experiments/em_cathode_mlp.yaml \
-    [--seed 42] \
-    [--run-name my_run]
-```
-
-Or via SLURM:
-
-```bash
+    --run-name <name>
+# or on NERSC:
 sbatch slurm/train_em_cathode.sh
 ```
 
-The data module loads the generated CSV, subsamples the background to a 1:1 ratio with signal-region stars in memory (the 4:1 CSV on disk is preserved), fits a `StandardScaler`, and saves train/val/test dataloaders and the fitted scaler to `$PSCRATCH/GD1_SCREAM/loaders/`. The scaler is required by `evaluate.py` for feature inverse-transformation.
+**Stage 2b — K-fold cross-validation (primary / paper path)**
 
-Training artifacts are written to:
-
-```
-$PSCRATCH/GD1_SCREAM/
-    checkpoints/<run_name>/
-        gd1.yaml              # stream config copy
-        em_cathode_mlp.yaml   # experiment config copy
-        run_params.yaml       # seed and run_name
-        epoch=N.ckpt          # checkpoint saved every epoch
-        best.ckpt             # best checkpoint by val F1 (0.8 threshold monitor)
-    loaders/
-        linear_train_loader_<run_name>.pth
-        linear_val_loader_<run_name>.pth
-        linear_test_loader_<run_name>.pth
-        scaler_<run_name>.pkl
+```bash
+python scripts/cross_validate.py \
+    --stream configs/streams/gd1.yaml \
+    --experiment configs/experiments/em_cathode_mlp.yaml \
+    --run_name <cv_run_name> \
+    --n_folds 5
 ```
 
-Training is logged to Weights & Biases under the project specified by `wandb_project` in the experiment YAML.
+To run a single fold in isolation (e.g. for parallelism):
 
-### Stage 3: Inference and Evaluation
+```bash
+python scripts/cross_validate.py \
+    --stream configs/streams/gd1.yaml \
+    --experiment configs/experiments/em_cathode_mlp.yaml \
+    --run_name <cv_run_name> \
+    --n_folds 5 \
+    --fold <i>
+```
+
+**Output (CV):** one checkpoint directory per fold at `$PSCRATCH/GD1_SCREAM/checkpoints/<cv_run_name>_<i>/`
+
+---
+
+### Stage 3 — Evaluate
+
+**Stage 3a — Single-run (exploratory path)**
 
 ```bash
 python scripts/evaluate.py \
     --stream configs/streams/gd1.yaml \
     --run-name <name> \
-    [--checkpoint /path/to/epoch=N.ckpt] \
-    [--threshold 0.96] \
-    [--output-dir /path/to/plots/]
+    [--threshold 0.96]
 ```
 
-By default the script loads `best.ckpt` and determines the classification threshold as the point on the validation-set precision–recall curve closest to (precision=1, recall=1). A manual threshold can be specified with `--threshold`.
+**Stage 3b — CV evaluation (primary / paper path)**
 
-Inference runs 100 MC noise samples per star on the test set. The script outputs:
-
-```
-$PSCRATCH/GD1_SCREAM/
-    results/
-        <run_name>_predictions.csv   # features + model_prob + true_label
-    plots/<run_name>/
-        eval_config.yaml             # reproducibility metadata (written first)
-        confusion_matrix_norm.png    # prediction-normalised confusion matrix
-        confusion_matrix_raw.png     # raw-count confusion matrix
-        phi1_phi2_preds.png          # $\phi_1$/$\phi_2$ sky map with TP/FP/FN overlay
-        Gmag_BP_RP_preds.png         # Gaia color–magnitude diagram
-        rmag_g_r_preds.png           # DECaLS g−r color–magnitude diagram
-        rmag_r_z_preds.png           # DECaLS r−z color–magnitude diagram
-        phi1_muphi1_track.png        # $\mu_{1}$ track along the stream
-        phi1_muphi2_track.png        # $\mu_{2}$ track along the stream
-        phi1_mu_tracks_combined.png  # 2×2 combined track plot
+```bash
+python scripts/evaluate_cv.py \
+    --stream configs/streams/gd1.yaml \
+    --run_name <cv_run_name> \
+    [--threshold 0.878]
 ```
 
-`eval_config.yaml` records the checkpoint path, threshold value and its source, number of MC samples, dataset sizes, and final metrics (recall, precision, F1) in a form sufficient to reproduce any plot exactly.
+Runs inference over all folds, concatenates held-out predictions, and writes a threshold sensitivity table (precision / recall / F1 at thresholds near the selected value).
+
+**Output:** `$PSCRATCH/GD1_SCREAM/results/<cv_run_name>_cv_predictions.csv`
+
+---
+
+### Stage 4 — Crossmatch with DESI radial velocities
+
+Open `figures/crossmatch_DESI.py` and set `RESULTS_PATH` and the predictions filename to point to the CSV from Stage 3b, then run:
+
+```bash
+python figures/crossmatch_DESI.py
+```
+
+Joins the GD-1 Gaia × DECaLS catalog with model predictions on `source_id`, then crossmatches against DESI DR1 (`mwsall-pix-iron.fits`) and Emma's `GD1_DESI_memprob.fits` for radial velocity labels.
+
+**Required input files in `$PSCRATCH/DESI_data/`:** `mwsall-pix-iron.fits`, `GD1_DESI_memprob.fits`  
+**Output:** `$PSCRATCH/GD-1_gaia_x_decals_VRAD2.fits`
+
+---
+
+### Stage 5 — Generate validation figure
+
+Optionally edit `MODEL_PROB_THRESHOLD` in `figures/validation_figure.py`, then run:
+
+```bash
+python figures/validation_figure.py
+```
+
+Reads the crossmatched FITS from Stage 4 and renders the 3-panel paper figure: (a) φ₁/φ₂ sky map, (b) DESI VRAD vs φ₁, (c) DECaLS CMD.
+
+**Output:** `figures/V2_validation_3panel.pdf` and `.png`
+
+---
+
+### Hyperparameter sweep
+
+Before committing to a full cross-validation run, sweep hyperparameters with W&B:
+
+```bash
+# Step 1: initialize a new sweep (run once — prints the SWEEP_ID)
+python scripts/sweep_train.py
+
+# Step 2: launch one or more agents
+python scripts/sweep_train.py --sweep-id <entity/project/id> --count 50
+# or on NERSC:
+sbatch slurm/sweep_em_cathode.sh
+```
+
+Once the sweep completes, select the best configuration from W&B, update `configs/experiments/em_cathode_mlp.yaml`, and proceed to Stage 2b.
 
 ---
 
@@ -296,8 +412,8 @@ The test suite covers the loss function, model forward passes and parameter coun
 
 ---
 
-## Current Limitations and Planned Extensions
+## Current Limitations
 
-SCREAM is under active development. The following extensions are planned:
-
-- **Additional streams.** The configuration system (stream YAML + `StreamConfig` dataclass) is designed to support new streams by adding a single YAML file, with no changes to the Python codebase.
+- **Single stream.** The configuration system (`StreamConfig` + stream YAML) is designed to generalize, but only GD-1 has been run end-to-end. Applying SCREAM to a new stream requires a new stream YAML and a corresponding data preparation script.
+- **Flow not serialized.** The `pzflow` normalizing flow cannot be pickled after training due to its custom JAX bijector stack. Background generation must happen in the same process as training; the flow cannot be reloaded for further sampling.
+- **Hardcoded paths in figure scripts.** `crossmatch_DESI.py` and `validation_figure.py` contain hardcoded `$PSCRATCH` paths and threshold values that must be edited manually before each run.
