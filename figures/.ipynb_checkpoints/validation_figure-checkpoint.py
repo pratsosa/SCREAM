@@ -287,6 +287,3 @@ ax_cmd.legend(loc='upper right', frameon=False, markerscale=2, handletextpad=0.0
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 fig.savefig('/global/homes/p/pratsosa/SCREAM/notebooks/val_plot_SF.png', dpi=300, bbox_inches='tight')
-
-
-
